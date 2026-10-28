@@ -9,6 +9,7 @@ import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../src/
 describe("popup translation interactions", () => {
   let translate: ReturnType<typeof vi.fn>;
   let save: ReturnType<typeof vi.fn>;
+  let loadSettings: ReturnType<typeof vi.fn>;
   let paragraph: ReturnType<typeof vi.fn>;
   let stored: ExtensionSettings;
   let settingsChanged: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void;
@@ -22,11 +23,12 @@ describe("popup translation interactions", () => {
     save = vi.fn(async () => undefined);
     paragraph = vi.fn(async (enabled: boolean) => ({ enabled }));
     stored = structuredClone(DEFAULT_SETTINGS);
+    loadSettings = vi.fn(async () => structuredClone(stored));
     const listeners = new Set<typeof settingsChanged>();
     settingsChanged = (changes, area) => { for (const listener of listeners) listener(changes, area); };
     vi.stubGlobal("chrome", {
       runtime: { sendMessage: async (request: RuntimeRequest): Promise<RuntimeResponse> => {
-        if (request.type === "GET_SETTINGS") return { ok: true, data: structuredClone(stored) };
+        if (request.type === "GET_SETTINGS") return { ok: true, data: await loadSettings() };
         if (request.type === "GET_OCR_STATUS") return { ok: true, data: { state: "installed", downloaded: 100, total: 100 } };
         if (request.type === "SAVE_SETTINGS") { await save(request.settings); stored = structuredClone(request.settings); }
         return { ok: true };
@@ -353,6 +355,31 @@ describe("popup translation interactions", () => {
     await vi.waitFor(() => expect(stored.autoTranslation?.enabled).toBe(true));
     expect(stored.autoTranslation).toEqual({ enabled: true, nonTargetLanguage: false, presetSites: ["github.com"],
       customSites: [{ id: "private", pattern: "example.com/docs/*", enabled: true }] });
+  });
+
+  it.each([
+    ["floatingBall", "floatingBallEnabled"],
+    ["imageTranslation", "imageTranslationEnabled"]
+  ] as const)("queues a %s change while automatic translation reads settings", async (id, field) => {
+    const latest = structuredClone(stored);
+    latest.cacheEnabled = false;
+    latest.autoTranslation = { enabled: false, nonTargetLanguage: false, presetSites: ["github.com"], customSites: [] };
+    const pending = deferred();
+    loadSettings.mockImplementationOnce(() => pending.promise);
+    const automatic = document.querySelector<HTMLButtonElement>("#autoTranslation")!;
+    automatic.click();
+    await vi.waitFor(() => expect(loadSettings).toHaveBeenCalledTimes(2));
+    const toggle = document.querySelector<HTMLButtonElement>(`#${id}`)!;
+    const enabled = !latest[field];
+    toggle.click();
+    expect(automatic.disabled).toBe(true);
+    pending.resolve(latest);
+    await vi.waitFor(() => expect(automatic.disabled).toBe(false));
+    await vi.waitFor(() => expect(stored[field]).toBe(enabled));
+    expect(stored[field]).toBe(enabled);
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(enabled));
+    expect(stored.cacheEnabled).toBe(false);
+    expect(stored.autoTranslation).toEqual({ ...latest.autoTranslation, enabled: true });
   });
 
   it("shows the site button only while automatic translation is enabled and adds the current host once", async () => {
