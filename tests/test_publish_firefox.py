@@ -132,6 +132,40 @@ class PublishFirefoxTests(unittest.TestCase):
             self.assertEqual(self.publish(dry_run=True), 'validated-offline')
         opener.assert_not_called()
 
+    def test_long_review_notes_fit_amo_limit_without_modifying_source(self):
+        for details in ('Reviewer details with Unicode 字体.\n' * 200, 'x' * 6000):
+            with self.subTest(multiline='\n' in details):
+                notes = 'npm ci\nnpm run build:firefox\n\n' + details
+                self.source_files['FIREFOX_BUILD.txt'] = notes
+                self.write_artifacts()
+                original_source = self.source.read_bytes()
+                responses = self.preflight() + [
+                    {'uuid': UPLOAD_ID},
+                    {'processed': True, 'valid': True, 'channel': 'listed', 'version': '1.2.0'},
+                    version('1.2.0', 'unreviewed'),
+                ]
+                with self.api(responses) as send:
+                    self.assertEqual(self.publish(self.client), 'submitted')
+                request = send.call_args_list[-1].args[0]
+                approval_notes = request.data.split(b'name="approval_notes"\r\n\r\n', 1)[1].split(b'\r\n--', 1)[0].decode('utf-8')
+                self.assertLessEqual(len(approval_notes), 3000)
+                self.assertIn('v1.2.0', approval_notes)
+                self.assertIn(COMMIT, approval_notes)
+                self.assertIn('npm run build:firefox\n', approval_notes)
+                self.assertIn('FIREFOX_BUILD.txt', approval_notes)
+                self.assertIn(original_source, request.data)
+                self.assertEqual(self.source.read_bytes(), original_source)
+                with ZipFile(io.BytesIO(original_source)) as archive:
+                    self.assertEqual(archive.read('FIREFOX_BUILD.txt').decode('utf-8'), notes)
+
+    def test_review_notes_exactly_at_limit_are_preserved_in_full(self):
+        prefix_length = len(firefox.build_approval_notes('v1.2.0', COMMIT, ''))
+        notes = 'x' * (3000 - prefix_length)
+        approval_notes = firefox.build_approval_notes('v1.2.0', COMMIT, notes)
+        self.assertEqual(len(approval_notes), 3000)
+        self.assertTrue(approval_notes.endswith(notes))
+        self.assertNotIn('[Continued', approval_notes)
+
     def test_dry_run_with_credentials_only_reads_listing(self):
         with self.api(self.preflight()) as send:
             self.assertEqual(self.publish(self.client, dry_run=True), 'validated-online')

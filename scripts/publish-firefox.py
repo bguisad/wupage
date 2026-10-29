@@ -23,6 +23,7 @@ from zipfile import ZipFile
 
 
 API_ROOT = 'https://addons.mozilla.org/api/v5'
+MAX_APPROVAL_NOTES_LENGTH = 3000
 
 
 def verify_checksum(path):
@@ -59,6 +60,22 @@ def validate_artifacts(package, source, tag, addon_id, commit):
         if not notes:
             raise ValueError('The source archive must include Firefox build and reviewer instructions.')
     return notes
+
+
+def build_approval_notes(tag, commit, notes):
+    prefix = (
+        f'WuPage {tag}; Git source revision {commit}.\n\n'
+        'Complete build and reviewer instructions are in FIREFOX_BUILD.txt '
+        'at the root of the attached source archive.\n\n'
+    )
+    if len(prefix + notes) <= MAX_APPROVAL_NOTES_LENGTH:
+        return prefix + notes
+    suffix = '\n\n[Continued in FIREFOX_BUILD.txt.]'
+    excerpt = notes[:MAX_APPROVAL_NOTES_LENGTH - len(prefix) - len(suffix)]
+    # Keep complete lines where possible, so a command is not cut in half.
+    if '\n' in excerpt:
+        excerpt = excerpt.rsplit('\n', 1)[0]
+    return prefix + excerpt.rstrip() + suffix
 
 
 def multipart(fields, files):
@@ -193,6 +210,7 @@ def publish_package(client, package_path, source_path, tag, addon_id, commit, dr
     package = Path(package_path).read_bytes()
     source = Path(source_path).read_bytes()
     notes = validate_artifacts(package, source, tag, addon_id, commit)
+    approval_notes = build_approval_notes(tag, commit, notes)
     print(f'{tag}: Firefox package, source, SHA-256 checksums, add-on ID and source revision verified.')
     if client is None:
         if not dry_run:
@@ -237,7 +255,7 @@ def publish_package(client, package_path, source_path, tag, addon_id, commit, dr
     # license from the existing listing; do not overwrite store metadata.
     created = client.request('POST', f'{addon_path}versions/', {
         'upload': upload_id,
-        'approval_notes': f'WuPage {tag}; Git source revision {commit}.\n\n{notes}',
+        'approval_notes': approval_notes,
     }, {'source': (f'wupage-{tag[1:]}-firefox-source.zip', source)})
     if created.get('version') != tag[1:] or created.get('channel') != 'listed' or not created.get('source'):
         raise RuntimeError('AMO accepted the version request but returned unexpected version/source data. Check the Developer Hub before retrying.')
