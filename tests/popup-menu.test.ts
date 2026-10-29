@@ -31,8 +31,8 @@ describe("popup menu preferences", () => {
     const clicked = vi.fn(); button.addEventListener("click", clicked);
     const order = [...DEFAULT_POPUP_MENU.order].reverse();
     applyPopupMenuLayout(document, { order, hidden: [] });
-    expect([...document.querySelector('[data-popup-menu-group="features"]')!.children].map(node => (node as HTMLElement).dataset.popupMenuItem))
-      .toEqual(["videoTranslation", "imageTranslation", "selectionTranslation", "floatingBall", "contextMenuTranslation"]);
+    expect([...document.querySelector('[data-popup-menu-grid]')!.children].map(node => (node as HTMLElement).dataset.popupMenuItem))
+      .toEqual(order);
     expect(document.querySelector("#contextMenuTranslation")).toBe(button);
     expect(document.querySelector("#ocrModelAction")).toBe(helper);
     expect(button.getAttribute("aria-pressed")).toBe("true");
@@ -44,7 +44,7 @@ describe("popup menu preferences", () => {
     mount();
     const video = document.querySelector<HTMLElement>("#videoTranslation")!; video.setAttribute("aria-pressed", "true");
     applyPopupMenuLayout(document, { hidden: DEFAULT_POPUP_MENU.order });
-    expect([...document.querySelectorAll<HTMLElement>("[data-popup-menu-group]")].every(group => group.hidden)).toBe(true);
+    expect(document.querySelector<HTMLElement>("[data-popup-menu-grid]")!.hidden).toBe(true);
     expect(document.querySelector<HTMLElement>("#openOptions")!.hidden).toBe(false);
     expect(video.getAttribute("aria-pressed")).toBe("true");
     applyPopupMenuLayout(document, DEFAULT_POPUP_MENU);
@@ -59,10 +59,11 @@ describe("popup menu preferences", () => {
     applyPopupMenuLayout(document, DEFAULT_POPUP_MENU);
     expect(paragraph.hidden).toBe(true);
     expect(document.querySelector("#pageToggle")!.hasAttribute("data-popup-menu-wide")).toBe(true);
-    applyPopupMenuLayout(document, { hidden: ["pageToggle"] });
-    expect(document.querySelector<HTMLElement>('[data-popup-menu-group="translation"]')!.hidden).toBe(true);
-    paragraph.hidden = false; applyPopupMenuLayout(document, { hidden: ["pageToggle"] });
-    expect(document.querySelector<HTMLElement>('[data-popup-menu-group="translation"]')!.hidden).toBe(false);
+    const hidden = DEFAULT_POPUP_MENU.order.filter(id => id !== "paragraphMode");
+    applyPopupMenuLayout(document, { hidden });
+    expect(document.querySelector<HTMLElement>('[data-popup-menu-grid]')!.hidden).toBe(true);
+    paragraph.hidden = false; applyPopupMenuLayout(document, { hidden });
+    expect(document.querySelector<HTMLElement>('[data-popup-menu-grid]')!.hidden).toBe(false);
     expect(paragraph.hasAttribute("data-popup-menu-wide")).toBe(true);
   });
 

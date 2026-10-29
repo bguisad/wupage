@@ -162,7 +162,8 @@ describe("popup language controls", () => {
     expect(query<HTMLSelectElement>("#translationDisplayMode").selectedOptions[0]?.textContent)
       .toBe("原色对照");
     expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译PDF");
-    expect(query<HTMLButtonElement>("#pageToggle").closest(".actions")?.querySelectorAll("button")).toHaveLength(2);
+    expect(query<HTMLButtonElement>("#pageToggle").closest("[data-popup-menu-grid]"))
+      .toBe(query<HTMLButtonElement>("#paragraphMode").parentElement);
     expect(document.querySelector("#openPdf")).toBeNull();
     expect(document.querySelector("#pdfTranslate")).toBeNull();
     const imageToggle = query<HTMLButtonElement>("#imageTranslation");

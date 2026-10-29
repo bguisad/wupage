@@ -82,7 +82,7 @@ try {
     const layout = await popup.evaluate(() => {
       const video = document.querySelector('#videoTranslation'), features = document.querySelector('.feature-toggles');
       return { grouped: features.contains(video), width: video.getBoundingClientRect().width, groupWidth: features.getBoundingClientRect().width,
-        beforeActions: video.getBoundingClientRect().bottom <= document.querySelector('.translation-actions').getBoundingClientRect().top,
+        beforeActions: video.getBoundingClientRect().bottom <= document.querySelector('#pageToggle').getBoundingClientRect().top,
         pdfAlone: document.querySelector('#openPdfWorkspace').getBoundingClientRect().width === document.querySelector('#openPdfWorkspace').parentElement.clientWidth };
     });
     assert.ok(layout.grouped && layout.beforeActions && layout.pdfAlone && Math.abs(layout.width - layout.groupWidth) < 1);

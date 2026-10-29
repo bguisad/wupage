@@ -32,28 +32,25 @@ export function normalizePopupMenu(value: unknown): PopupMenuLayout {
 /** Move existing controls, retaining their events, state and capability visibility. */
 export function applyPopupMenuLayout(root: ParentNode, value: unknown): void {
   const layout = normalizePopupMenu(value), hidden = new Set(layout.hidden);
-  const nodes = new Map([...root.querySelectorAll<HTMLElement>("[data-popup-menu-item]")]
+  const grid = root.querySelector<HTMLElement>("[data-popup-menu-grid]");
+  if (!grid) return;
+  const nodes = new Map([...grid.querySelectorAll<HTMLElement>("[data-popup-menu-item]")]
     .map(node => [node.dataset.popupMenuItem!, node]));
-  for (const { id } of POPUP_MENU_GROUPS) {
-    const group = root.querySelector<HTMLElement>(`[data-popup-menu-group="${id}"]`);
-    if (!group) continue;
-    const members = new Set<string>(POPUP_MENU_ITEMS.filter(item => item.group === id).map(item => item.id));
-    const items = layout.order.filter(item => members.has(item)).map(item => nodes.get(item)).filter((node): node is HTMLElement => !!node);
-    for (const [index, node] of items.entries()) {
-      const before = group.children[index];
-      if (node !== before) group.insertBefore(node, before ?? null);
-      node.toggleAttribute("data-popup-menu-hidden", hidden.has(node.dataset.popupMenuItem as PopupMenuItem));
-    }
-    const visible = items.filter(node => !node.hidden && !node.hasAttribute("data-popup-menu-hidden"));
-    const wide = new Set<HTMLElement>();
-    let run: HTMLElement[] = [];
-    const finish = () => { if (run.length % 2) wide.add(run.at(-1)!); run = []; };
-    for (const node of visible) {
-      if (node.dataset.popupMenuItem === "openPdfWorkspace") { finish(); wide.add(node); }
-      else run.push(node);
-    }
-    finish();
-    for (const node of items) node.toggleAttribute("data-popup-menu-wide", wide.has(node));
-    if (group.hidden !== !visible.length) group.hidden = !visible.length;
+  const items = layout.order.map(item => nodes.get(item)).filter((node): node is HTMLElement => !!node);
+  for (const [index, node] of items.entries()) {
+    const before = grid.children[index];
+    if (node !== before) grid.insertBefore(node, before ?? null);
+    node.toggleAttribute("data-popup-menu-hidden", hidden.has(node.dataset.popupMenuItem as PopupMenuItem));
   }
+  const visible = items.filter(node => !node.hidden && !node.hasAttribute("data-popup-menu-hidden"));
+  const wide = new Set<HTMLElement>();
+  let run: HTMLElement[] = [];
+  const finish = () => { if (run.length % 2) wide.add(run.at(-1)!); run = []; };
+  for (const node of visible) {
+    if (node.dataset.popupMenuItem === "openPdfWorkspace" || node.dataset.popupMenuItem === "videoTranslation") { finish(); wide.add(node); }
+    else run.push(node);
+  }
+  finish();
+  for (const node of items) node.toggleAttribute("data-popup-menu-wide", wide.has(node));
+  if (grid.hidden !== !visible.length) grid.hidden = !visible.length;
 }

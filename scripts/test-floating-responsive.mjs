@@ -171,7 +171,7 @@ try {
   await popup.locator('#floatingBall').waitFor({ state: 'visible' });
   await popup.waitForFunction(() => document.querySelector('#paragraphMode').hidden);
   const fullPageAction = await popup.locator('#pageToggle').boundingBox();
-  assert(Math.abs(fullPageAction.width - await popup.locator('.translation-actions').evaluate(row => row.clientWidth)) < 1, 'The page button fills the row on touch devices');
+  assert(Math.abs(fullPageAction.width - await popup.locator('[data-popup-menu-grid]').evaluate(row => row.clientWidth)) < 1, 'The page button fills the row on touch devices');
   const featureGrid = await popup.locator('.feature-toggles').boundingBox();
   const floatingToggle = await popup.locator('#floatingBall').boundingBox();
   const autoToggle = await popup.locator('#contextMenuTranslation').boundingBox();

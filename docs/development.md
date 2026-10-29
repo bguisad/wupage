@@ -216,9 +216,9 @@ npm run test:page
 
 ### 外观配置与验证
 
-「菜单功能」在 `appearance.popupMenu` 中保存入口顺序与隐藏项，目录和兼容性规范化位于 `src/shared/popup-menu.ts`。旧配置默认显示全部入口，新入口追加到所属组；未知 ID 和重复项会过滤。弹窗按组移动现有节点以保留事件、功能状态与 OCR 控件，隐藏空组并按可见项填满行；段落模式的触屏限制独立生效。设置入口与语言、服务、显示模式固定保留。`src/options/popup-menu.ts` 提供勾选、键盘可用的排序按钮、预览和仅重置菜单的草稿操作，保存复用现有外观设置流程。
+「菜单功能」在 `appearance.popupMenu` 中保存入口顺序与隐藏项，目录和兼容性规范化位于 `src/shared/popup-menu.ts`。旧配置默认显示全部入口，未知 ID 和重复项会过滤，缺少的新入口追加到末尾。弹窗与编辑预览共用两列网格和完整顺序，允许跨类别排序；移动现有节点以保留事件、功能状态与 OCR 控件。视频和 PDF 使用整行，其余按钮在相邻整行前及末尾按可见项填满行。段落模式的触屏限制独立生效，空网格收起。设置入口与语言、服务、显示模式固定保留。`src/options/popup-menu.ts` 提供左侧点击移除、右侧点击追加、Pointer Events 拖动排序、最近槽位吸附和让位动画；拖动阈值防误触，松开后抑制点击删除，Esc、指针取消和预览外释放恢复原顺序，边缘滚动支持长菜单，减少动态效果偏好会禁用动画。键盘支持 Alt + 方向键/Home/End 排序和 Delete/Backspace 移除。所有操作修改独立草稿，保存复用现有外观设置流程。
 
-构建后运行 `npm run test:menu-layout`、`npm run test:menu-layout:edge`、`npm run test:menu-layout:firefox`，以独立浏览器配置验证 12 个入口的选择与组内顺序、保存前预览、已打开弹窗同步、节点与按钮行为保留、旧弹窗保存兼容、空组收起、恢复默认及宽窄窗口。报告与截图保存在 `.npm-cache/menu-layout/<browser>/`。单元测试另覆盖旧配置兼容、异常 ID、重复项、触屏能力限制和无关设置保存不产生布局变更。
+构建后运行 `npm run test:menu-layout`、`npm run test:menu-layout:edge`、`npm run test:menu-layout:firefox`，以独立浏览器配置验证 12 个入口的双向移动、跨类别键盘与真实指针排序、吸附提示、拖动取消与防误删、保存前预览、已打开弹窗同步、节点与按钮行为保留、旧弹窗保存兼容、空网格收起、恢复默认及宽窄窗口。报告与截图保存在 `.npm-cache/menu-layout/<browser>/`。单元测试另覆盖旧配置兼容、异常 ID、重复项、触屏能力限制和无关设置保存不产生布局变更。
 
 `src/shared/appearance.ts` 管理内置方案、自定义颜色校验和明暗方案选择；`appearance-runtime.ts` 监听系统明暗及本地设置变化，通过 `--wp-*` 变量应用到扩展界面。网页中只注入扩展专用变量，不修改宿主页面的 `color-scheme`；划词卡片在 Shadow DOM 中继承同一组变量。`src/options/appearance.ts` 保存独立表单草稿，与其他设置分类一起提交。
 

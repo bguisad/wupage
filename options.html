@@ -263,23 +263,26 @@
                   <h3>弹窗菜单</h3>
                   <button id="resetPopupMenu" type="button" class="secondary">恢复默认布局</button>
                 </div>
-                <p class="field-description menu-layout-description">勾选要显示的入口，使用上移、下移调整组内顺序。隐藏入口后，已开启的功能和快捷键保持当前设置。</p>
+                <p class="field-description menu-layout-description">把常用功能放进菜单，排成顺手的样子。</p>
                 <div class="menu-layout-columns">
-                  <div id="popupMenuItems" class="menu-layout-groups"></div>
                   <aside class="menu-layout-preview-area" aria-labelledby="popupMenuPreviewTitle">
-                    <h3 id="popupMenuPreviewTitle">布局预览</h3>
+                    <div class="menu-layout-column-heading"><h3 id="popupMenuPreviewTitle">我的菜单 <span id="popupMenuSelectedCount" class="menu-layout-count"></span></h3><span>拖动排序 · 点击移除</span></div>
                     <div id="popupMenuPreview" class="menu-layout-preview">
                       <div class="menu-layout-preview-header"><strong>WuPage</strong><span data-wupage-icon="settings" aria-hidden="true"></span></div>
-                      <div class="menu-layout-preview-language">自动检测 <span aria-hidden="true">→</span> 中文</div>
-                      <div class="menu-layout-preview-field">翻译服务</div>
-                      <div class="menu-layout-preview-field">翻译模式</div>
-                      <div data-popup-menu-group="features" class="menu-layout-preview-grid"></div>
-                      <div data-popup-menu-group="translation" class="menu-layout-preview-grid"></div>
-                      <div data-popup-menu-group="tools" class="menu-layout-preview-grid"></div>
-                      <div data-popup-menu-group="links" class="menu-layout-preview-links"></div>
+                      <div class="menu-layout-preview-language"><span>自动检测⌄</span><span aria-hidden="true">→</span><span>中文⌄</span><span class="menu-layout-preview-auto">自动</span></div>
+                      <div class="menu-layout-preview-label">翻译服务<div class="menu-layout-preview-field">翻译服务<span aria-hidden="true">⌄</span></div></div>
+                      <div class="menu-layout-preview-label">翻译模式<div class="menu-layout-preview-field">原色对照<span aria-hidden="true">⌄</span></div></div>
+                      <div data-popup-menu-grid class="menu-layout-preview-grid" aria-describedby="popupMenuKeyboardHint"></div>
+                      <p id="popupMenuPreviewEmpty" class="menu-preview-empty" hidden>从右侧添加常用功能</p>
                     </div>
-                    <p class="field-description">语言、翻译服务、翻译模式和右上角设置始终保留。保存后同步更新已打开的弹窗。</p>
+                    <p id="popupMenuKeyboardHint" class="field-description menu-layout-hint">拖近位置自动吸附。也可聚焦按钮，按 Alt + 方向键排序。</p>
                   </aside>
+                  <div class="menu-layout-library" aria-labelledby="popupMenuLibraryTitle">
+                    <div class="menu-layout-column-heading"><h3 id="popupMenuLibraryTitle">可添加功能 <span id="popupMenuAvailableCount" class="menu-layout-count"></span></h3><span>点击添加</span></div>
+                    <div id="popupMenuItems" class="menu-layout-groups"></div>
+                    <div id="popupMenuLibraryEmpty" class="menu-library-empty" hidden><span class="menu-library-empty-icon" aria-hidden="true">✓</span><strong>所有功能都在菜单里了</strong><p>点击左侧暂时用不到的按钮，<br>它会回到这里，随时可以再添加。</p></div>
+                    <p class="field-description menu-layout-library-note">移除入口会保留功能的当前开关状态。语言、翻译服务、翻译模式与设置入口始终显示。</p>
+                  </div>
                 </div>
                 <p id="popupMenuStatus" class="field-description" role="status" aria-live="polite"></p>
               </div>
