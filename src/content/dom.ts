@@ -1144,6 +1144,15 @@ function applyTranslationTextColor(
   displayMode: TranslationDisplayMode
 ): void {
   translationColorSources.set(translation, { source });
+  if (isCompactNavigationText(source) || isCompactControlText(source)) {
+    // Host menus commonly style every span as an icon or collapsed label.
+    // Shield inserted text without changing the link, layout cell or icon.
+    for (const [name, value] of [
+      ["display", "inline"], ["position", "static"], ["float", "none"],
+      ["visibility", "visible"], ["opacity", "1"], ["font", "inherit"],
+      ["font-size", displayMode === "replace" ? "inherit" : "0.92em"], ["line-height", "inherit"]
+    ]) translation.style.setProperty(name, value, "important");
+  }
   const color = window.getComputedStyle(source).color;
   if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") return;
   if (displayMode !== "bilingual-accent") {
@@ -1502,7 +1511,7 @@ function isLayoutContainer(element: Element): boolean {
 // A semantic paragraph/list item may itself arrange several independent cells.
 // Read and render inside the nearest cell instead of aggregating its siblings
 // or introducing another flex/grid item for their combined translation.
-function constrainGroupingToLayoutSlot(element: Element, block: Element): Element | null {
+function constrainGroupingToLayoutSlot(element: Element, block: Element, respectLinkLayout = false): Element | null {
   let current = element;
   while (current !== block && current.parentElement) {
     // Inline-block badges, statistics links and labels are independent boxes
@@ -1512,7 +1521,7 @@ function constrainGroupingToLayoutSlot(element: Element, block: Element): Elemen
       && !current.querySelector(`${SEMANTIC_TEXT_BLOCK_SELECTOR},div,ul,ol,dl`)) return current;
     const parent = current.parentElement;
     if (isLayoutContainer(parent)
-      && !(parent.matches("a") && !parent.querySelector(SEMANTIC_TEXT_BLOCK_SELECTOR))) {
+      && (respectLinkLayout || !(parent.matches("a") && !parent.querySelector(SEMANTIC_TEXT_BLOCK_SELECTOR)))) {
       return current.querySelector(`${SEMANTIC_TEXT_BLOCK_SELECTOR},div,ul,ol,dl,button,input,select,textarea`)
         ? null : current;
     }
@@ -1955,6 +1964,11 @@ function getCompactNavigationTarget(element: Element): Element | null {
   if (target.querySelector("button,input,select,textarea,[role='button']")) return null;
   const text = normalizeText(target.textContent ?? "");
   if (text.length < 2 || text.length > 80) return null;
+  // Navigation links can be fixed-height icon/text rows even when their icons
+  // are font glyphs rather than img/svg. Keep rich labels inside the existing
+  // text cell so replacement does not land in a clipped extra row/column.
+  const slot = constrainGroupingToLayoutSlot(element, target, true);
+  if (slot !== target) return slot;
   if (target.matches("a") && target.querySelector("img,svg,canvas")) {
     return getNestedTextHost(element, target);
   }

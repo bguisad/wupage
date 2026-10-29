@@ -15,6 +15,27 @@ describe("translation layout boundaries", () => {
   });
   afterEach(() => { clearTranslations(); vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
+  it.each(["flex", "grid"])("keeps sidebar labels in their text cell beside font icons in %s links", display => {
+    document.body.innerHTML = `<aside><ul><li><a id="nav-item" href="/overview" style="display:${display}">
+      <span id="nav-label">Extension <strong>overview</strong></span><i aria-hidden="true" class="status-icon">done</i>
+    </a></li></ul></aside>`;
+    const original = document.querySelector("aside")!.innerHTML;
+    const link = document.querySelector("a")!, icon = document.querySelector("i")!;
+    const segments = collectTextSegments();
+    expect(segments.map(segment => segment.text)).toEqual(["Extension overview"]);
+    renderTranslations(segments.map(({ id }) => ({ id, text: "扩展概述" })), "replace");
+    for (const mode of ["replace", "bilingual", "bilingual-accent"] as const) {
+      setTranslationDisplayMode(mode);
+      expect(document.querySelector("a > .wupage-translation")).toBeNull();
+      expect(document.querySelector("#nav-label .wupage-translation")?.textContent).toBe("扩展概述");
+      expect(icon.textContent).toBe("done");
+      expect(document.querySelector("a")).toBe(link);
+      expect(link.getAttribute("href")).toBe("/overview");
+    }
+    clearTranslations();
+    expect(document.querySelector("aside")!.innerHTML).toBe(original);
+  });
+
   it.each(["flex", "grid"])("keeps card fields out of their ancestor %s list layout", display => {
     document.body.innerHTML = `<main><ol><li id="slot" style="display:${display}"><div id="card" style="display:flex">
       <div id="fields" style="display:flex;flex-direction:column"><div style="display:flex">

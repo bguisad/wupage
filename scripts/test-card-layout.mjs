@@ -20,6 +20,7 @@ const listTranslations = [
   ["performance", "性能"], ["stream", "流"], ["memory-efficient", "节省内存"]
 ];
 const translations = [[title, "游戏扩展模块库"], [summary, "用于创建扩展并与其他玩家分享的轻量级工具。"], ["by", "作者"],
+  ["Extension overview", "扩展概述"], ["Store listings", "商店条目"], ["Submission status", "提交状态"],
   ["Type ⟪WUPAGE0⟫ to search", "输入 ⟪WUPAGE0⟫ 进行搜索"], ["Type / to search", "输入 / 进行搜索"],
   ["Auto", "自动"], ["Optimized for Balance", "针对平衡进行了优化"],
   ["Optimized for: Balance", "针对：平衡进行了优化"], ...listTranslations];
@@ -57,6 +58,16 @@ const server = createServer((request, response) => {
     .model-list{padding:0;list-style:none}.action-content{display:grid;grid-template:"spacer leadingAction leadingVisual content" min-content/min-content min-content min-content minmax(0,auto)}
     .leading-visual{grid-area:leadingVisual;width:24px}.action-subcontent{display:grid;grid-area:content;grid-template:"label trailingVisual trailingAction" min-content/minmax(0,auto) min-content min-content;gap:8px}
     .description-wrap{display:flex;flex-direction:column;gap:4px;grid-area:label}.model-label{font:600 14px/20px sans-serif}.model-description{font:400 12px/16px sans-serif}.trailing-visual{grid-area:trailingVisual;white-space:nowrap}
+    .sidebar-regression{width:280px;padding:8px;background:white;color:#222}
+    .sidebar-regression ul{margin:0;padding:0;list-style:none}
+    .sidebar-regression a{height:36px;overflow:hidden;align-items:center;color:#222;text-decoration:none;font:14px/36px sans-serif}
+    .sidebar-regression .nav-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sidebar-regression .status-slot{width:16px;height:16px;margin-left:auto;overflow:hidden;font-size:0;background:#168317;border-radius:50%}
+    #sidebar-grid{display:grid;grid-template-columns:minmax(0,1fr) 24px;grid-auto-rows:36px}
+    #sidebar-flex{display:flex;justify-content:space-between}.sidebar-regression #sidebar-flex .nav-label{flex:1}
+    #sidebar-css{display:grid;grid-template-columns:minmax(0,1fr) 24px;grid-auto-rows:36px}
+    #sidebar-css span{display:none;position:absolute;font-size:0;line-height:0;visibility:hidden;opacity:0}
+    #sidebar-css>.nav-label{display:block;position:static;font:14px/36px sans-serif;visibility:visible;opacity:1}
     </style></head><body><main role="main">
     <header><button class="search-control" type="button"><svg aria-hidden="true" width="16" height="16"></svg>
       <span class="search-label">Type <kbd>/</kbd> to search</span></button></header>
@@ -70,6 +81,11 @@ const server = createServer((request, response) => {
           <span id="model-label" class="model-label" data-component="ActionList.Item.Label"><span>Auto</span></span>
           <span id="model-description" class="model-description" data-component="ActionList.Description"><span>Optimized for Balance</span></span>
         </div><span class="trailing-visual" aria-hidden="true">Balance ›</span></span></div></li></ul>
+    <aside class="sidebar-regression" aria-label="Extension navigation"><ul>
+      <li><a id="sidebar-grid" href="/overview"><span class="nav-label">Extension <strong>overview</strong></span><i class="status-slot" aria-hidden="true">done</i></a></li>
+      <li><a id="sidebar-flex" href="/listing"><span class="nav-label">Store <strong>listings</strong></span><i class="status-slot" aria-hidden="true">done</i></a></li>
+      <li><a id="sidebar-css" href="/submission"><span class="nav-label">Submission <strong>status</strong></span><i class="status-slot" aria-hidden="true">done</i></a></li>
+    </ul></aside>
     <p>${chinese ? "游戏版本 · 加载器 · 排序方式 · 客户端或服务端" : "Browse community extensions and tools for your game."}</p>
     ${["flex", "grid"].map(layout => `<div class="card" id="${layout}"><div class="fields ${layout}">
       <span class="title">${title}</span><span class="author">by <a href="/user/developer">developer</a></span>
@@ -193,6 +209,21 @@ try {
         await setMode(mode);
         await waitForMode(mode);
         assert.equal(await page.locator(".fields > .wupage-translation").count(), 0);
+        assert.equal(await page.locator(".sidebar-regression a > .wupage-translation").count(), 0,
+          "Sidebar translations must stay in their text cell, not become a clipped third item");
+        const sidebar = await page.locator(".sidebar-regression a").evaluateAll(links => links.map(link => {
+          const text = link.querySelector('.nav-label .wupage-translation'), icon = link.querySelector('.status-slot');
+          if(!text)return {missing:true};
+          const row = link.getBoundingClientRect(), style = getComputedStyle(text);
+          const range = document.createRange();range.selectNodeContents(text);
+          return {text:text.textContent,display:style.display,fontSize:parseFloat(style.fontSize),visibility:style.visibility,opacity:style.opacity,
+            visible:[...range.getClientRects()].some(box=>box.width>0&&box.height>0&&box.left<row.right&&box.right>row.left&&box.top<row.bottom&&box.bottom>row.top),
+            iconVisible:icon.getBoundingClientRect().width===16,href:link.getAttribute('href')};
+        }));
+        assert.deepEqual(sidebar.map(row=>row.text),['扩展概述','商店条目','提交状态']);
+        assert.ok(sidebar.every(row=>row.visible&&row.iconVisible&&row.display!=='none'&&row.fontSize>0&&row.visibility==='visible'&&row.opacity==='1'),
+          JSON.stringify({locale,width,mode,sidebar}));
+        assert.deepEqual(sidebar.map(row=>row.href),['/overview','/listing','/submission']);
         assert.equal(await page.locator("#list-layout li > .wupage-translation").count(), 0);
         assert.equal(await page.locator(".layout-link .wupage-translation").count(), 5);
         assert.deepEqual(await page.locator(".layout-link").evaluateAll(nodes => nodes.map(node => ({
@@ -279,7 +310,7 @@ try {
   assert.ok(requests.includes(summary), "Retry the untranslated description independently");
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, "report.json"), JSON.stringify({ ...identity, reports, errors }, null, 2));
-  console.log("PASS: localized card pages; 12 locale/viewport/mode combinations, title and recovered typography, stable dynamic counts, author links, icon/link rows, tag labels, mixed-language recovery and source restoration");
+  console.log("PASS: localized card pages; 12 locale/viewport/mode combinations, sidebar font-icon rows and hidden-span styles, title and recovered typography, stable dynamic counts, author links, icon/link rows, tag labels, mixed-language recovery and source restoration");
 } finally {
   await context?.close();
   await new Promise(resolve => server.close(resolve));
