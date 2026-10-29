@@ -400,7 +400,6 @@ function createMenu(): void {
         ${TRANSLATION_DISPLAY_MODES.map((mode) =>
           `<option value="${mode.value}">${mode.label}</option>`
         ).join("")}
-        <option value="paragraph">段落模式</option>
       </select>
     </label>
     <div class="wupage-feature-buttons" role="group" aria-label="翻译功能">
@@ -426,8 +425,13 @@ function createMenu(): void {
         <p id="wupage-ocr-status" class="ocr-model-status" role="status"></p>
       </div>
     </div>
-    <p class="wupage-menu-hint" hidden>按住 Ctrl 点击段落翻译；再次点击恢复原文。</p>
-    <button type="button" data-action="page-toggle">翻译全文</button>
+    <div class="wupage-translation-actions">
+      <button type="button" data-action="page-toggle">翻译全文</button>
+      <button type="button" data-action="paragraph-mode" class="wupage-feature-button" aria-pressed="false" aria-describedby="wupage-paragraph-mode-hint">
+        <span>段落翻译</span><span class="wupage-feature-indicator" aria-hidden="true"></span>
+      </button>
+    </div>
+    <p id="wupage-paragraph-mode-hint" class="wupage-menu-hint" hidden>按住 Ctrl 点击段落翻译；再次点击恢复原文。</p>
     <div class="wupage-translation-feedback">
       <p data-role="translation-status" role="status" aria-live="polite" aria-atomic="true">点击悬浮球即可翻译全文</p>
       <button type="button" data-action="retranslate" hidden>重新翻译</button>
@@ -435,13 +439,15 @@ function createMenu(): void {
     </div>
   `;
   const pointerMedia = window.matchMedia?.("(any-hover: none) and (any-pointer: coarse)");
-  const updateParagraphOption = () => {
-    const option = menu.querySelector<HTMLOptionElement>('option[value="paragraph"]')!;
-    option.hidden = option.disabled = pointerMedia?.matches === true;
+  const updateParagraphVisibility = () => {
+    const button = menu.querySelector<HTMLButtonElement>('[data-action="paragraph-mode"]')!;
+    button.hidden = pointerMedia?.matches === true;
+    button.disabled = button.hidden || button.getAttribute("aria-busy") === "true";
+    syncParagraphModeButton(menu);
   };
-  updateParagraphOption();
-  pointerMedia?.addEventListener("change", updateParagraphOption);
-  window.addEventListener("pagehide", () => pointerMedia?.removeEventListener("change", updateParagraphOption), { once: true });
+  updateParagraphVisibility();
+  pointerMedia?.addEventListener("change", updateParagraphVisibility);
+  window.addEventListener("pagehide", () => pointerMedia?.removeEventListener("change", updateParagraphVisibility), { once: true });
   menu.addEventListener("pointerenter", (event) => {
     touchInteraction = event.pointerType === "touch";
     cancelMenuClose();
@@ -485,6 +491,7 @@ function createMenu(): void {
     if (action === "selection-translation") void toggleReadingFeature(menu, "selection").catch(showMenuError);
     if (action === "image-translation") void toggleReadingFeature(menu, "image").catch(showMenuError);
     if (action === "page-toggle") void togglePageTranslationFromFloating();
+    if (action === "paragraph-mode") void toggleMenuParagraphMode(menu, target).catch(showMenuError);
     if (action === "retranslate") void togglePageTranslationFromFloating(true);
   });
   document.documentElement.append(menu);
@@ -618,8 +625,7 @@ function closeMenuOnOutsideClick(event: MouseEvent): void {
 }
 
 async function updateMenuState(menu: HTMLElement): Promise<void> {
-  const hint = menu.querySelector<HTMLElement>(".wupage-menu-hint");
-  if (hint) hint.hidden = !paragraphMode;
+  syncParagraphModeButton(menu);
   refreshTranslationState();
 
   const settings = await getSettings();
@@ -683,7 +689,8 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
     enhanceProviderSelect(providerSelect, settings.providers);
   }
   const mode = menu.querySelector<HTMLSelectElement>("[data-role='display-mode']");
-  if (mode) mode.value = paragraphMode ? "paragraph" : settings.translationDisplayMode;
+  if (mode) mode.value = settings.translationDisplayMode;
+  syncParagraphModeButton(menu);
   const button = document.getElementById(FLOATING_ID);
   if (button && !menu.hidden) positionMenu(menu, button, true);
   refreshTranslationState();
@@ -1406,21 +1413,36 @@ async function toggleReadingFeature(menu: HTMLElement, feature: "selection" | "i
 
 async function updateDisplayMode(menu: HTMLElement, select: HTMLSelectElement): Promise<void> {
   const requested = select.value;
-  const previousParagraph = paragraphMode;
   select.disabled = true;
   select.setAttribute("aria-busy", "true");
   try {
-    if (requested === "paragraph") await setParagraphMode(true);
-    else {
-      if (paragraphMode) await setParagraphMode(false);
-      await updateFloatingSettings(menu, { translationDisplayMode: requested as TranslationDisplayMode });
-    }
-  } catch (error) {
-    if (paragraphMode !== previousParagraph) await setParagraphMode(previousParagraph);
-    throw error;
+    await updateFloatingSettings(menu, { translationDisplayMode: requested as TranslationDisplayMode });
   } finally {
     select.disabled = false;
     select.setAttribute("aria-busy", "false");
+  }
+}
+
+function syncParagraphModeButton(menu: HTMLElement): void {
+  const button = menu.querySelector<HTMLButtonElement>('[data-action="paragraph-mode"]');
+  button?.setAttribute("aria-pressed", String(paragraphMode));
+  const hint = menu.querySelector<HTMLElement>(".wupage-menu-hint");
+  if (hint) hint.hidden = !paragraphMode || button?.hidden === true;
+}
+
+async function toggleMenuParagraphMode(menu: HTMLElement, button: HTMLButtonElement): Promise<void> {
+  const previous = paragraphMode;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await setParagraphMode(!previous);
+  } catch (error) {
+    await setParagraphMode(previous).catch(() => {});
+    throw error;
+  } finally {
+    syncParagraphModeButton(menu);
+    button.disabled = button.hidden;
+    button.setAttribute("aria-busy", "false");
   }
 }
 

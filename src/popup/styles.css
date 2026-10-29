@@ -31,6 +31,19 @@ header,
   width: 100%;
 }
 
+.translation-actions button {
+  min-height: 40px;
+  font-size: 14px;
+}
+
+.translation-actions .feature-button:hover:enabled {
+  border-color: var(--wp-accent, #116466);
+}
+
+.translation-actions [hidden] {
+  display: none;
+}
+
 #pageToggle {
   display: inline-flex;
   align-items: center;

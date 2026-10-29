@@ -28,7 +28,7 @@ const openPdfWorkspaceButton = query<HTMLButtonElement>("#openPdfWorkspace");
 const videoSubtitlesButton = query<HTMLButtonElement>("#openVideoSubtitles");
 const fileAccessHelp = query<HTMLDivElement>("#fileAccessHelp");
 const openFileAccessSettingsButton = query<HTMLButtonElement>("#openFileAccessSettings");
-const translationModeSelect = translationDisplayMode;
+const paragraphModeButton = query<HTMLButtonElement>("#paragraphMode");
 const paragraphModeHint = query<HTMLSpanElement>("#paragraphModeHint");
 const contextMenuTranslationButton = query<HTMLButtonElement>("#contextMenuTranslation");
 const autoTranslationButton = query<HTMLButtonElement>("#autoTranslation");
@@ -98,15 +98,15 @@ async function init(): Promise<void> {
   updateLocalNotice();
   translationDisplayMode.innerHTML = TRANSLATION_DISPLAY_MODES
     .map((mode) => `<option value="${mode.value}">${mode.label}</option>`)
-    .join("") + '<option value="paragraph">段落模式</option>';
+    .join("");
   const pointerMedia = window.matchMedia?.("(any-hover: none) and (any-pointer: coarse)");
-  const updateParagraphOption = () => {
-    const option = translationDisplayMode.querySelector<HTMLOptionElement>('option[value="paragraph"]')!;
-    option.hidden = pointerMedia?.matches === true;
+  const updateParagraphVisibility = () => {
+    paragraphModeButton.hidden = pointerMedia?.matches === true;
+    updateParagraphModeButton();
   };
-  updateParagraphOption();
-  pointerMedia?.addEventListener("change", updateParagraphOption);
-  window.addEventListener("pagehide", () => pointerMedia?.removeEventListener("change", updateParagraphOption), { once: true });
+  updateParagraphVisibility();
+  pointerMedia?.addEventListener("change", updateParagraphVisibility);
+  window.addEventListener("pagehide", () => pointerMedia?.removeEventListener("change", updateParagraphVisibility), { once: true });
   translationDisplayMode.value = settings.translationDisplayMode;
   updateAutoTranslationButton();
   autoTranslationButton.addEventListener("click", toggleAutoTranslation);
@@ -131,7 +131,7 @@ async function init(): Promise<void> {
     await loadTranslationState();
   } else if (!pageTranslationAvailable) {
     paragraphModeAvailable = false;
-    translationModeSelect.title = "浏览器设置页和扩展内部页面不支持段落模式。";
+    paragraphModeButton.title = "浏览器设置页和扩展内部页面不支持段落模式。";
     pageToggleButton.title = "请切换到普通网页后再翻译。";
     debugButton.title = "请切换到普通网页后再打开 Debug。";
     setStatus(activeTab?.url
@@ -140,7 +140,7 @@ async function init(): Promise<void> {
   }
   if (activeTabIsPdf) {
     paragraphModeAvailable = false;
-    translationModeSelect.title = "PDF 使用独立的双栏翻译页面。";
+    paragraphModeButton.title = "PDF 使用独立的双栏翻译页面。";
     updatePageToggleButton();
   }
   updatePageActionAvailability();
@@ -163,7 +163,8 @@ async function init(): Promise<void> {
       updatePageActionAvailability();
     }
   });
-  translationModeSelect.addEventListener("change", toggleParagraphMode);
+  translationDisplayMode.addEventListener("change", saveSelection);
+  paragraphModeButton.addEventListener("click", toggleParagraphMode);
   contextMenuTranslationButton.addEventListener("click", toggleContextMenuTranslation);
   updateContextMenuTranslationButton();
   translationDisplayMode.disabled = false;
@@ -214,7 +215,7 @@ async function savePopupSettings(): Promise<void> {
   if (sourceLang.value !== settings.sourceLang) patch.sourceLang = sourceLang.value || "auto";
   if (targetLang.value !== settings.targetLang) patch.targetLang = targetLang.value || "zh-CN";
   if (provider.value !== settings.activeProviderId) patch.activeProviderId = provider.value;
-  if (translationDisplayMode.value !== "paragraph" && translationDisplayMode.value !== settings.translationDisplayMode) {
+  if (translationDisplayMode.value !== settings.translationDisplayMode) {
     patch.translationDisplayMode = translationDisplayMode.value as ExtensionSettings["translationDisplayMode"];
   }
   // Capture the newest control selection while earlier saves are still queued.
@@ -251,7 +252,8 @@ function applyPopupSettings(incoming: ExtensionSettings): void {
     provider.value = settings.activeProviderId;
     enhanceProviderSelect(provider, settings.providers);
   }
-  if (translationModeSelect.getAttribute("aria-busy") !== "true") updateParagraphModeButton();
+  if (translationDisplayMode.value !== settings.translationDisplayMode) translationDisplayMode.value = settings.translationDisplayMode;
+  if (paragraphModeButton.getAttribute("aria-busy") !== "true") updateParagraphModeButton();
   if (contextMenuTranslationButton.getAttribute("aria-busy") !== "true") updateContextMenuTranslationButton();
   if (autoTranslationButton.getAttribute("aria-busy") !== "true") updateAutoTranslationButton();
   if (selectionTranslationButton.getAttribute("aria-busy") !== "true") updateSelectionTranslationButton();
@@ -441,13 +443,13 @@ async function loadParagraphMode(): Promise<void> {
       type: "GET_PARAGRAPH_MODE"
     });
     paragraphMode = result.enabled;
-    translationModeSelect.removeAttribute("title");
+    paragraphModeButton.removeAttribute("title");
     updateParagraphModeButton();
   } catch (error) {
     // A missing/old content script is a connection state, not a capability
-    // verdict. Keep the option selectable so a later attempt can reconnect.
+    // verdict. Keep the button enabled so a later attempt can reconnect.
     paragraphModeError = error instanceof Error ? error.message : String(error);
-    translationModeSelect.title = paragraphModeError;
+    paragraphModeButton.title = paragraphModeError;
     setStatus(paragraphModeError);
   }
 }
@@ -561,36 +563,23 @@ function updateSelectionTranslationButton(): void {
 }
 
 async function toggleParagraphMode(): Promise<void> {
-  const requested = translationModeSelect.value;
-  const enabled = translationModeSelect.value === "paragraph";
-  const previousMode = paragraphMode;
-  const previousDisplay = settings.translationDisplayMode;
-  setButtonBusy(translationModeSelect, true);
+  const enabled = !paragraphMode;
+  setButtonBusy(paragraphModeButton, true);
   if (paragraphModeError && status.textContent === paragraphModeError) setStatus("");
   paragraphModeError = undefined;
   try {
-    if (enabled !== paragraphMode) {
-      if (!paragraphModeAvailable) throw new Error("此页面不支持段落模式。");
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab.id) throw new Error("没有活动标签页。");
-      const result = await sendTabMessage<{ enabled: boolean }>(tab.id, { type: "SET_PARAGRAPH_MODE", enabled });
-      paragraphMode = result.enabled;
-      translationModeSelect.removeAttribute("title");
-    }
-    if (requested !== "paragraph") await savePopupSettings();
+    if (!paragraphModeAvailable) throw new Error("此页面不支持段落模式。");
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("没有活动标签页。");
+    const result = await sendTabMessage<{ enabled: boolean }>(tab.id, { type: "SET_PARAGRAPH_MODE", enabled });
+    paragraphMode = result.enabled;
+    paragraphModeButton.removeAttribute("title");
   } catch (error) {
-    settings.translationDisplayMode = previousDisplay;
-    if (paragraphMode !== previousMode) {
-      await chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
-        if (tab?.id) await sendTabMessage(tab.id, { type: "SET_PARAGRAPH_MODE", enabled: previousMode });
-      }).catch(() => undefined);
-      paragraphMode = previousMode;
-    }
     paragraphModeError = error instanceof Error ? error.message : String(error);
     setStatus(paragraphModeError);
   } finally {
     updateParagraphModeButton();
-    setButtonBusy(translationModeSelect, false);
+    setButtonBusy(paragraphModeButton, false);
   }
 }
 
@@ -678,9 +667,10 @@ async function clearCache(): Promise<void> {
 }
 
 function updateParagraphModeButton(): void {
-  const value = paragraphMode ? "paragraph" : settings.translationDisplayMode;
-  if (translationModeSelect.value !== value) translationModeSelect.value = value;
-  if (paragraphModeHint.hidden !== !paragraphMode) paragraphModeHint.hidden = !paragraphMode;
+  const value = String(paragraphMode);
+  if (paragraphModeButton.getAttribute("aria-pressed") !== value) paragraphModeButton.setAttribute("aria-pressed", value);
+  const hideHint = !paragraphMode || paragraphModeButton.hidden;
+  if (paragraphModeHint.hidden !== hideHint) paragraphModeHint.hidden = hideHint;
 }
 
 function updatePageToggleButton(): void {
@@ -697,7 +687,6 @@ function updateFloatingBallButton(): void {
 function updatePageActionAvailability(): void {
   pageToggleButton.disabled = !pageTranslationAvailable;
   videoSubtitlesButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
-  const paragraphOption = translationModeSelect.querySelector<HTMLOptionElement>('option[value="paragraph"]');
-  if (paragraphOption) paragraphOption.disabled = !paragraphModeAvailable;
+  paragraphModeButton.disabled = !paragraphModeAvailable;
   debugButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
 }

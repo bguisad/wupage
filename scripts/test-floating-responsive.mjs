@@ -142,7 +142,7 @@ try {
     assert(triggerBox?.height >= 36 && nameBox?.width > 0 && iconBox?.width > 0);
     assert(nameBox.x >= iconBox.x + iconBox.width);
     assert.equal(await menu.evaluate(element => element.scrollWidth > element.clientWidth), false);
-    assert.equal(await menu.locator('option[value="paragraph"]').evaluate(option => option.hidden), true);
+    assert.equal(await menu.locator('[data-action="paragraph-mode"]').evaluate(button => button.hidden), true);
     assert.equal(await menu.locator('.wupage-menu-hint').isVisible(), false);
     await trigger.tap();
     const list = menu.locator('.wupage-provider-list');
@@ -159,17 +159,19 @@ try {
   }
   // A mouse-capable tablet keeps the desktop controls, regardless of viewport width.
   await touch.send('Emulation.setTouchEmulationEnabled', { enabled: false });
-  await page.waitForFunction(() => !document.querySelector('[data-role="display-mode"] option[value="paragraph"]').hidden);
+  await page.waitForFunction(() => !document.querySelector('[data-action="paragraph-mode"]').hidden);
   assert.equal(await menu.locator('.wupage-menu-hint').isVisible(), false);
   await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true });
-  await page.waitForFunction(() => document.querySelector('[data-role="display-mode"] option[value="paragraph"]').hidden);
+  await page.waitForFunction(() => document.querySelector('[data-action="paragraph-mode"]').hidden);
   const popup = await context.newPage();
   await popup.setViewportSize({ width: 320, height: 800 });
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
   const popupMedia = await context.newCDPSession(popup);
   await popupMedia.send('Emulation.setTouchEmulationEnabled', { enabled: true });
   await popup.locator('#floatingBall').waitFor({ state: 'visible' });
-  await popup.waitForFunction(() => document.querySelector('#translationDisplayMode option[value="paragraph"]').hidden);
+  await popup.waitForFunction(() => document.querySelector('#paragraphMode').hidden);
+  const fullPageAction = await popup.locator('#pageToggle').boundingBox();
+  assert(Math.abs(fullPageAction.width - await popup.locator('.translation-actions').evaluate(row => row.clientWidth)) < 1, 'The page button fills the row on touch devices');
   const featureGrid = await popup.locator('.feature-toggles').boundingBox();
   const floatingToggle = await popup.locator('#floatingBall').boundingBox();
   const autoToggle = await popup.locator('#contextMenuTranslation').boundingBox();
@@ -178,7 +180,7 @@ try {
   assert(Math.abs(featureGrid.width - floatingToggle.width - autoToggle.width - 8) < 1, 'The feature buttons fill two columns');
   assert(Math.abs(floatingToggle.width - imageFeature.width) < 1, 'The image feature fits one column');
   await popupMedia.send('Emulation.setTouchEmulationEnabled', { enabled: false });
-  await popup.waitForFunction(() => !document.querySelector('#translationDisplayMode option[value="paragraph"]').hidden);
+  await popup.waitForFunction(() => !document.querySelector('#paragraphMode').hidden);
   await popup.close();
 
   // Feed updates must not alternate the primary action or move an already open menu.

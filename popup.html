@@ -41,8 +41,7 @@
       </div>
       <label>
         翻译模式
-        <select id="translationDisplayMode" aria-describedby="paragraphModeHint" disabled></select>
-        <span id="paragraphModeHint" class="field-description" hidden>按住 Ctrl 点击段落翻译；再次点击恢复原文。</span>
+        <select id="translationDisplayMode" disabled></select>
       </label>
       <div class="feature-toggles" role="group" aria-label="翻译功能">
         <button id="contextMenuTranslation" type="button" class="feature-button" disabled title="右键点击网页，通过菜单翻译全文或恢复原文">
@@ -71,9 +70,14 @@
           <p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
         </div>
       </div>
-      <div class="actions">
+      <div class="actions translation-actions">
         <button id="pageToggle" type="button" disabled>翻译全文</button>
+        <button id="paragraphMode" type="button" class="feature-button" aria-pressed="false" aria-describedby="paragraphModeHint" disabled>
+          <span>段落翻译</span>
+          <span class="feature-indicator" aria-hidden="true"></span>
+        </button>
       </div>
+      <span id="paragraphModeHint" class="field-description" hidden>按住 Ctrl 点击段落翻译；再次点击恢复原文。</span>
       <div class="actions">
         <button id="openVideoSubtitles" type="button" class="secondary" disabled title="翻译视频已有字幕，支持导入 SRT/VTT">视频字幕</button>
         <button id="openPdfWorkspace" type="button" class="secondary">打开 PDF</button>

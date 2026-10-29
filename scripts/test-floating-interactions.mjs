@@ -303,9 +303,9 @@ try {
   await hitbox.waitFor({state:'hidden'});
   await popup.locator('#floatingBall:not(:disabled)').click();
   await hitbox.waitFor({state:'visible'});
-  await popup.locator('#translationDisplayMode').selectOption('paragraph');
+  await popup.locator('#paragraphMode').click();
   await page.waitForFunction(()=>document.documentElement.classList.contains('wupage-paragraph-mode'));
-  await popup.locator('#translationDisplayMode:not(:disabled)').selectOption('bilingual');
+  await popup.locator('#paragraphMode:not(:disabled)').click();
   await page.waitForFunction(()=>!document.documentElement.classList.contains('wupage-paragraph-mode'));
 
   await control.evaluate(async()=>{

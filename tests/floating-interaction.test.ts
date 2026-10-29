@@ -7,7 +7,7 @@ import type { ExtensionSettings, RuntimeRequest } from "../src/shared/types";
 
 vi.mock("../src/content/runtime", () => ({ sendRuntimeRequest: vi.fn() }));
 
-import { initFloatingBall, setParagraphMode } from "../src/content/floating";
+import { getParagraphMode, initFloatingBall, setParagraphMode } from "../src/content/floating";
 import { clearPageTranslation, getPageTranslationState, startPageTranslation } from "../src/content/page-translation";
 import { sendRuntimeRequest } from "../src/content/runtime";
 import { injectContentStyles } from "../src/content/styles";
@@ -605,10 +605,30 @@ describe("floating translation interactions", () => {
   it("shows paragraph instructions inline without an extra confirmation", async () => {
     const alert = vi.spyOn(window, "alert");
     await setParagraphMode(true);
-    expect(query<HTMLSelectElement>("[data-role='display-mode']").value).toBe("paragraph");
+    expect(query<HTMLButtonElement>("[data-action='paragraph-mode']").getAttribute("aria-pressed")).toBe("true");
+    expect(query<HTMLSelectElement>("[data-role='display-mode']").value).toBe(stored.translationDisplayMode);
     expect(query(".wupage-menu-hint").textContent).toContain("Ctrl");
     expect(alert).not.toHaveBeenCalled();
     await setParagraphMode(false);
+  });
+
+  it("toggles paragraph translation with a button independently of its display style", async () => {
+    const toggle = query<HTMLButtonElement>("[data-action='paragraph-mode']");
+    const mode = query<HTMLSelectElement>("[data-role='display-mode']");
+    expect(mode.querySelector('option[value="paragraph"]')).toBeNull();
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(getParagraphMode()).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    mode.value = "replace";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(stored.translationDisplayMode).toBe("replace"));
+    expect(getParagraphMode()).toBe(true);
+    await vi.waitFor(() => expect(mode.disabled).toBe(false));
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
+    expect(query<HTMLElement>(".wupage-menu-hint").hidden).toBe(true);
+    expect(mode.value).toBe("replace");
   });
 
   it("respects independent paragraph, floating keyboard and dismissal switches", async () => {

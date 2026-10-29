@@ -149,7 +149,7 @@ describe("popup language controls", () => {
     expect(query<HTMLSelectElement>("#translationDisplayMode").selectedOptions[0]?.textContent)
       .toBe("原色对照");
     expect(query<HTMLButtonElement>("#pageToggle").textContent).toBe("翻译PDF");
-    expect(query<HTMLButtonElement>("#pageToggle").closest(".actions")?.querySelectorAll("button")).toHaveLength(1);
+    expect(query<HTMLButtonElement>("#pageToggle").closest(".actions")?.querySelectorAll("button")).toHaveLength(2);
     expect(document.querySelector("#openPdf")).toBeNull();
     expect(document.querySelector("#pdfTranslate")).toBeNull();
     const imageToggle = query<HTMLButtonElement>("#imageTranslation");
@@ -222,7 +222,7 @@ describe("popup language controls", () => {
     });
 
     expect(query<HTMLButtonElement>("#pageToggle").disabled).toBe(true);
-    expect(query<HTMLOptionElement>('#translationDisplayMode option[value="paragraph"]').disabled).toBe(true);
+    expect(query<HTMLButtonElement>("#paragraphMode").disabled).toBe(true);
     expect(query<HTMLButtonElement>("#debug").disabled).toBe(true);
     expect(sendTabMessage).not.toHaveBeenCalled();
 

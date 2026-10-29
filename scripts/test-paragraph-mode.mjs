@@ -9,7 +9,6 @@ import { browserTarget, verifyBrowserIdentity } from './lib/browser-target.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url)), target = browserTarget();
 if (target.kind === 'firefox') throw new Error('This popup regression uses Chromium automation.');
-const baseline = process.argv.includes('--baseline');
 const output = path.join(root, '.npm-cache/paragraph-mode', target.kind);
 await fs.mkdir(output, { recursive: true });
 const calls = [], checks = [];
@@ -57,28 +56,35 @@ try {
     chrome.tabs.query = info => info.active ? Promise.resolve([sourceTab]) : query(info);
   }, sourceTab);
   await popup.goto(`chrome-extension://${id}/popup.html`);
-  const mode = popup.locator('#translationDisplayMode'), option = mode.locator('option[value="paragraph"]');
-  await popup.locator('#translationDisplayMode:not(:disabled)').waitFor();
-  console.log('Initial popup:', await popup.evaluate(() => ({ title: document.querySelector('#translationDisplayMode').title,
-    disabled: document.querySelector('option[value="paragraph"]').disabled, status: document.querySelector('#status').textContent })));
-  await popup.screenshot({ path: path.join(output, baseline ? 'baseline.png' : 'disconnected.png') });
-  if (baseline) {
-    assert.equal(await option.evaluate(option => option.disabled), true, 'reproduce the locked paragraph option');
-    checks.push('reproduced: disconnected page permanently disables the paragraph option');
-  } else {
-    assert.equal(await option.evaluate(option => option.disabled), false, 'connection failure does not disable the option');
+  const mode = popup.locator('#translationDisplayMode'), toggle = popup.locator('#paragraphMode');
+  await toggle.waitFor({ state: 'visible' });
+  await popup.locator('#paragraphMode:not(:disabled)').waitFor();
+  await popup.screenshot({ path: path.join(output, 'disconnected.png') });
+  {
+    assert.equal(await toggle.isEnabled(), true, 'connection failure does not disable the button');
+    assert.equal(await mode.locator('option').count(), 3);
     assert.ok((await popup.locator('#status').textContent()).includes('刷新网页后重试'));
-    await mode.selectOption('paragraph');
-    await popup.waitForFunction(() => !document.querySelector('#translationDisplayMode').disabled && document.querySelector('#translationDisplayMode').value === 'bilingual');
+    await toggle.click();
+    await popup.waitForFunction(() => !document.querySelector('#paragraphMode').disabled && document.querySelector('#paragraphMode').getAttribute('aria-pressed') === 'false');
     assert.ok((await popup.locator('#status').textContent()).includes('刷新网页后重试'));
-    assert.equal(await option.evaluate(option => option.disabled), false);
+    assert.equal(await toggle.isEnabled(), true);
     checks.push('missing content script gives an actionable refresh hint and keeps retry enabled');
     await page.reload(); await page.locator('#wupage-floating-ball').waitFor({ state: 'visible' });
-    await mode.selectOption('paragraph');
+    await toggle.click();
     await page.waitForFunction(() => document.documentElement.classList.contains('wupage-paragraph-mode'));
-    await popup.waitForFunction(() => !document.querySelector('#translationDisplayMode').disabled && document.querySelector('#translationDisplayMode').value === 'paragraph');
+    await popup.waitForFunction(() => !document.querySelector('#paragraphMode').disabled && document.querySelector('#paragraphMode').getAttribute('aria-pressed') === 'true');
     assert.equal(await popup.locator('#status').textContent(), '');
-    assert.equal(await mode.getAttribute('title'), null);
+    assert.equal(await toggle.getAttribute('title'), null);
+    await mode.selectOption('bilingual-accent');
+    await control.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' })).data.translationDisplayMode === 'bilingual-accent');
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+    for (const width of [264, 330]) {
+      await popup.setViewportSize({ width, height: 1000 });
+      assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const full = await popup.locator('#pageToggle').boundingBox(), paragraph = await toggle.boundingBox();
+      assert.ok(Math.abs(full.y - paragraph.y) < 1 && Math.abs(full.height - paragraph.height) < 1);
+      await popup.screenshot({ path: path.join(output, `buttons-${width}.png`) });
+    }
     await popup.screenshot({ path: path.join(output, 'enabled.png') });
     checks.push('the same popup successfully retries after page refresh and clears the stale warning');
     const child = page.frames().find(frame => frame.url() === origin + '/child'); assert.ok(child);
@@ -87,17 +93,31 @@ try {
       await page.keyboard.down('Control');
       try { await frame.locator('#paragraph').click(); } finally { await page.keyboard.up('Control'); }
       await frame.locator('#paragraph .wupage-translation').waitFor();
+      await frame.waitForFunction(() => document.querySelector('#paragraph .wupage-translation')?.textContent.includes('译文'));
       assert.ok((await frame.locator('#paragraph .wupage-translation').textContent()).includes('译文'));
       await page.keyboard.down('Control');
       try { await frame.locator('#paragraph').click(); } finally { await page.keyboard.up('Control'); }
       await frame.locator('#paragraph .wupage-translation').waitFor({ state: 'detached' });
     }
     assert.equal(calls.length, 2, 'only the two clicked paragraphs are sent');
-    await mode.selectOption('bilingual');
+    await toggle.click();
     await page.waitForFunction(() => !document.documentElement.classList.contains('wupage-paragraph-mode'));
     await child.waitForFunction(() => !document.documentElement.classList.contains('wupage-paragraph-mode'));
+    assert.equal(await mode.inputValue(), 'bilingual-accent');
     checks.push('Ctrl-click translates/restores exactly one paragraph in top and embedded documents; exit synchronizes');
+    const ball = page.locator('#wupage-floating-ball');
+    await ball.hover();
+    const menu = page.locator('#wupage-floating-menu'); await menu.waitFor({ state: 'visible' });
+    const menuToggle = menu.locator('[data-action="paragraph-mode"]');
+    await menuToggle.click();
+    await page.waitForFunction(() => document.documentElement.classList.contains('wupage-paragraph-mode'));
+    await menu.locator('[data-role="display-mode"]').selectOption('replace');
+    await page.waitForFunction(() => document.querySelector('[data-role="display-mode"]').disabled === false);
+    assert.equal(await menuToggle.getAttribute('aria-pressed'), 'true');
+    await menuToggle.click();
+    await page.waitForFunction(() => !document.documentElement.classList.contains('wupage-paragraph-mode'));
+    checks.push('popup and floating menu expose independent paragraph buttons and preserve mode when changing display style');
   }
-  await fs.writeFile(path.join(output, baseline ? 'baseline-report.json' : 'report.json'), JSON.stringify({ ...identity, checks, calls }, null, 2));
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ ...identity, checks, calls }, null, 2));
   console.log(JSON.stringify({ ...identity, checks, output }, null, 2));
 } finally { await browser?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

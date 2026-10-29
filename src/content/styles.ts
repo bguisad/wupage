@@ -409,6 +409,16 @@ export function injectContentStyles(): void {
       font-weight: 700;
     }
 
+    #wupage-floating-menu .wupage-translation-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    #wupage-floating-menu .wupage-translation-actions > button {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
     #wupage-floating-menu button[data-action="page-toggle"] {
       display: flex;
       align-items: center;

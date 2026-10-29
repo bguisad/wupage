@@ -131,7 +131,7 @@ describe("popup translation interactions", () => {
     translate.mockImplementationOnce(() => translation.promise);
     button().click();
     await vi.waitFor(() => expect(translate).toHaveBeenCalledTimes(1));
-    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
     const changes = observeOtherControls(toggle);
     const status = document.querySelector("#status")!;
     const statusChanges = vi.fn();
@@ -142,8 +142,7 @@ describe("popup translation interactions", () => {
         const pending = deferred();
         paragraph.mockImplementationOnce(() => pending.promise);
         const calls = paragraph.mock.calls.length;
-        toggle.value = enabled ? "paragraph" : "bilingual";
-        toggle.dispatchEvent(new Event("change"));
+        toggle.click();
         await vi.waitFor(() => expect(paragraph).toHaveBeenCalledTimes(calls + 1));
         expect(paragraph).toHaveBeenLastCalledWith(enabled);
         expect(toggle.disabled).toBe(true);
@@ -152,7 +151,7 @@ describe("popup translation interactions", () => {
         expect(paragraph).toHaveBeenCalledTimes(calls + 1);
         pending.resolve({ enabled });
         await vi.waitFor(() => expect(toggle.disabled).toBe(false));
-        expect(toggle.value).toBe(enabled ? "paragraph" : "bilingual");
+        expect(toggle.getAttribute("aria-pressed")).toBe(String(enabled));
         expect(button().classList.contains("is-loading")).toBe(true);
         expect(status.textContent).toBe("正在翻译...");
       }
@@ -205,15 +204,13 @@ describe("popup translation interactions", () => {
 
   it("reports a failed paragraph change and allows a silent retry", async () => {
     paragraph.mockRejectedValueOnce(new Error("切换失败"));
-    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
-    toggle.value = "paragraph";
-    toggle.dispatchEvent(new Event("change"));
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
+    toggle.click();
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
     expect(document.querySelector("#status")?.textContent).toBe("切换失败");
-    expect(toggle.value).toBe("bilingual");
-    toggle.value = "paragraph";
-    toggle.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(toggle.value).toBe("paragraph"));
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("true"));
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
     expect(paragraph).toHaveBeenLastCalledWith(true);
     expect(document.querySelector("#status")?.textContent).toBe("");
@@ -227,12 +224,11 @@ describe("popup translation interactions", () => {
       .mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."))
       .mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."));
     await import("../src/popup/index");
-    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
-    expect(toggle.querySelector<HTMLOptionElement>('option[value="paragraph"]')!.disabled).toBe(false);
     expect(document.querySelector("#status")?.textContent).toContain("刷新网页后重试");
-    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(toggle.value).toBe("paragraph"));
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("true"));
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
     expect(paragraph).toHaveBeenLastCalledWith(true);
     expect(document.querySelector<HTMLSpanElement>("#paragraphModeHint")!.hidden).toBe(false);
@@ -242,16 +238,33 @@ describe("popup translation interactions", () => {
 
   it("gives a refresh hint on a disconnected paragraph attempt and permits another attempt", async () => {
     paragraph.mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."));
-    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
-    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
+    toggle.click();
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
-    expect(toggle.value).toBe("bilingual");
-    expect(toggle.querySelector<HTMLOptionElement>('option[value="paragraph"]')!.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(document.querySelector("#status")?.textContent).toContain("刷新网页后重试");
-    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
+    toggle.click();
     await vi.waitFor(() => expect(toggle.disabled).toBe(false));
-    expect(toggle.value).toBe("paragraph");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector("#status")?.textContent).toBe("");
+  });
+
+  it("keeps paragraph translation enabled when changing its display style", async () => {
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
+    const mode = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
+    expect(Array.from(mode.options, option => option.value)).toEqual(["replace", "bilingual", "bilingual-accent"]);
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("true"));
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    mode.value = "replace";
+    mode.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(stored.translationDisplayMode).toBe("replace"));
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(paragraph).toHaveBeenCalledTimes(1);
+    toggle.click();
+    await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
+    expect(mode.value).toBe("replace");
+    expect(stored.translationDisplayMode).toBe("replace");
   });
 
   it("restores the floating ball value when saving fails", async () => {
