@@ -15,6 +15,7 @@ import { SETTINGS_KEY } from "../shared/defaults";
 import { doubaoProviderNotice, isDoubaoProviderUnavailable, syncDoubaoTargetControls } from "../shared/doubao-ui";
 import { renderUiIcons, uiIconMarkup } from "../shared/ui-icons";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
+import { observeParagraphMode } from "../shared/paragraph-mode";
 
 renderUiIcons();
 
@@ -46,6 +47,7 @@ const WEBSITE_URL = "https://wupage.mrwuliu.top/";
 
 let settings: ExtensionSettings;
 let paragraphMode = false;
+let paragraphModeRevision = 0;
 let paragraphModeAvailable = true;
 let paragraphModeError: string | undefined;
 let autoTranslationNotice: string | undefined;
@@ -67,6 +69,12 @@ void init().catch((error: unknown) => {
 });
 
 async function init(): Promise<void> {
+  const stopParagraphMode = observeParagraphMode(enabled => {
+    paragraphModeRevision++;
+    paragraphMode = enabled;
+    updateParagraphModeButton();
+  });
+  window.addEventListener("pagehide", stopParagraphMode, { once: true });
   chrome.storage?.onChanged?.addListener(settingsChanged);
   window.addEventListener("pagehide", () => chrome.storage?.onChanged?.removeListener?.(settingsChanged), { once: true });
   openFileAccessSettingsButton.addEventListener("click", () => {
@@ -436,13 +444,14 @@ function escapeHtml(value: string): string {
 }
 
 async function loadParagraphMode(): Promise<void> {
+  const revision = paragraphModeRevision;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab.id) return;
     const result = await sendTabMessage<{ enabled: boolean }>(tab.id, {
       type: "GET_PARAGRAPH_MODE"
     });
-    paragraphMode = result.enabled;
+    if (revision === paragraphModeRevision) paragraphMode = result.enabled;
     paragraphModeButton.removeAttribute("title");
     updateParagraphModeButton();
   } catch (error) {
@@ -563,6 +572,7 @@ function updateSelectionTranslationButton(): void {
 }
 
 async function toggleParagraphMode(): Promise<void> {
+  const revision = paragraphModeRevision;
   const enabled = !paragraphMode;
   setButtonBusy(paragraphModeButton, true);
   if (paragraphModeError && status.textContent === paragraphModeError) setStatus("");
@@ -572,7 +582,7 @@ async function toggleParagraphMode(): Promise<void> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("没有活动标签页。");
     const result = await sendTabMessage<{ enabled: boolean }>(tab.id, { type: "SET_PARAGRAPH_MODE", enabled });
-    paragraphMode = result.enabled;
+    if (revision === paragraphModeRevision) paragraphMode = result.enabled;
     paragraphModeButton.removeAttribute("title");
   } catch (error) {
     paragraphModeError = error instanceof Error ? error.message : String(error);

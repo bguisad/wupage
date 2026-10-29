@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from "../src/shared/defaults";
 import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../src/shared/types";
+import { PARAGRAPH_MODE_KEY } from "../src/shared/paragraph-mode";
 
 describe("popup translation interactions", () => {
   let translate: ReturnType<typeof vi.fn>;
@@ -124,6 +125,26 @@ describe("popup translation interactions", () => {
     expect(translate).not.toHaveBeenCalled();
     button().click();
     await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("已翻译 1 段"));
+  });
+
+  it("updates the paragraph button when another tab changes the global mode", () => {
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
+    for (const enabled of [true, false]) {
+      settingsChanged({ [PARAGRAPH_MODE_KEY]: { newValue: enabled } }, "local");
+      expect(toggle.getAttribute("aria-pressed")).toBe(String(enabled));
+      expect(document.querySelector<HTMLSpanElement>("#paragraphModeHint")!.hidden).toBe(!enabled);
+    }
+    expect(paragraph).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer global state when an older paragraph command responds late", async () => {
+    const pending = deferred(); paragraph.mockImplementationOnce(() => pending.promise);
+    const toggle = document.querySelector<HTMLButtonElement>("#paragraphMode")!;
+    toggle.click(); await vi.waitFor(() => expect(paragraph).toHaveBeenCalledWith(true));
+    settingsChanged({ [PARAGRAPH_MODE_KEY]: { newValue: false } }, "local");
+    pending.resolve({ enabled: true });
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("silently toggles paragraph mode without changing other controls during a translation", async () => {

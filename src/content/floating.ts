@@ -33,6 +33,7 @@ import { translateParagraph } from "./paragraph-translation";
 import { normalizeShortcutEnabled } from "../shared/shortcuts";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
 import { isLikelyPdfUrl } from "../pdf/launch";
+import { observeParagraphMode } from "../shared/paragraph-mode";
 
 const FLOATING_ID = "wupage-floating-ball";
 const FLOATING_HITBOX_ID = "wupage-floating-hitbox";
@@ -89,6 +90,8 @@ let settingsSave: Promise<void> = Promise.resolve();
 let menuOcr: ReturnType<typeof setupOcrControl> | undefined;
 let unsubscribeTranslationState: (() => void) | undefined;
 let paragraphMode = false;
+let paragraphModeRevision = 0;
+let unsubscribeParagraphMode: (() => void) | undefined;
 let floatingBallEnabled = true;
 let shortcutEnabled = normalizeShortcutEnabled(undefined);
 let settingsSnapshot = createSettingsSnapshot(readSettings);
@@ -177,6 +180,12 @@ export function initFloatingBall(): void {
   refreshTranslationState();
   hitbox.hidden = true;
   void initializeFloatingBall(button);
+  unsubscribeParagraphMode?.();
+  unsubscribeParagraphMode = observeParagraphMode(enabled => {
+    if (paragraphMode !== enabled || document.documentElement.classList.contains("wupage-paragraph-mode") !== enabled) {
+      void setParagraphMode(enabled, false);
+    }
+  });
   subscribeToPositionChanges(button);
   document.addEventListener("mousemove", handleParagraphPreview, { passive: true });
   document.addEventListener("click", handleDocumentClick, true);
@@ -431,7 +440,7 @@ function createMenu(): void {
         <span>段落翻译</span><span class="wupage-feature-indicator" aria-hidden="true"></span>
       </button>
     </div>
-    <p id="wupage-paragraph-mode-hint" class="wupage-menu-hint" hidden>按住 Ctrl 点击段落翻译；再次点击恢复原文。</p>
+    <p id="wupage-paragraph-mode-hint" class="wupage-menu-hint" hidden>所有网页生效；按住 Ctrl 点击段落翻译，再次点击恢复原文。</p>
     <div class="wupage-translation-feedback">
       <p data-role="translation-status" role="status" aria-live="polite" aria-atomic="true">点击悬浮球即可翻译全文</p>
       <button type="button" data-action="retranslate" hidden>重新翻译</button>
@@ -1296,12 +1305,16 @@ export async function setFloatingBallEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function setParagraphMode(enabled: boolean, broadcast = true): Promise<void> {
+  const revision = paragraphModeRevision;
+  if (broadcast && chrome.runtime?.id) {
+    await sendRuntimeRequest({ type: "SET_PARAGRAPH_MODE", enabled });
+    // A storage event may already have applied this or a newer global change.
+    if (revision !== paragraphModeRevision) return;
+  }
+  paragraphModeRevision++;
   paragraphMode = enabled;
   document.documentElement.classList.toggle("wupage-paragraph-mode", paragraphMode);
   setActiveParagraph(null);
-  if (broadcast && chrome.runtime?.id) {
-    void sendRuntimeRequest({ type: "FRAME_SESSION_PARAGRAPH", enabled }).catch(() => {});
-  }
   const menu = document.getElementById("wupage-floating-menu");
   if (menu) await updateMenuState(menu);
 }

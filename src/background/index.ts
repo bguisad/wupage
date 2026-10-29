@@ -17,6 +17,8 @@ import { initializeDoubaoCompatibility } from "./doubao-compatibility";
 import { runtimeErrorResponse } from "../shared/errors";
 import { frameSessions } from "./frame-sessions";
 import type { FrameSessionRequest } from "../shared/frame-session";
+import { readParagraphMode } from "../shared/paragraph-mode";
+import { saveParagraphMode } from "./paragraph-mode";
 
 frameSessions.install();
 
@@ -50,6 +52,10 @@ try {
 async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   if (isFrameRequest(request)) return frameSessions.handle(request, sender);
   switch (request.type) {
+    case "GET_PARAGRAPH_MODE":
+      return { enabled: await readParagraphMode() };
+    case "SET_PARAGRAPH_MODE":
+      return saveParagraphMode(request.enabled);
     case "PAGE_TRANSLATION_STATE_CHANGED":
       await refreshPageContextMenu(sender);
       return null;
@@ -163,8 +169,6 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     case "TRANSLATE_CONTEXT_IMAGE":
     case "CLEAR_TRANSLATION":
     case "GET_TRANSLATION_STATE":
-    case "GET_PARAGRAPH_MODE":
-    case "SET_PARAGRAPH_MODE":
     case "GET_FLOATING_BALL":
     case "SET_FLOATING_BALL":
     case "OPEN_TRANSLATION_DEBUG":

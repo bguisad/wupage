@@ -29,8 +29,9 @@ export function activateFrameContent(documentKey: string) {
     void translateParagraph(target)
       .catch(() => {}).finally(() => { pending = false; });
   }, true);
-  const runtime = installFrameRuntime(documentKey, { top: false, paragraph: enabled => {
+  const setParagraph = (enabled: boolean) => {
     paragraph = enabled; document.documentElement.classList.toggle("wupage-paragraph-mode", enabled);
-  } });
-  return { ...runtime, selection: translateShortcutParagraphs };
+  };
+  const runtime = installFrameRuntime(documentKey, { top: false });
+  return { ...runtime, paragraph: setParagraph, selection: translateShortcutParagraphs };
 }

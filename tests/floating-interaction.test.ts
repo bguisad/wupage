@@ -12,6 +12,7 @@ import { clearPageTranslation, getPageTranslationState, startPageTranslation } f
 import { sendRuntimeRequest } from "../src/content/runtime";
 import { injectContentStyles } from "../src/content/styles";
 import { ProviderError } from "../src/shared/errors";
+import { PARAGRAPH_MODE_KEY } from "../src/shared/paragraph-mode";
 
 describe("floating translation interactions", () => {
   let stored: ExtensionSettings;
@@ -22,6 +23,8 @@ describe("floating translation interactions", () => {
   beforeEach(async () => {
     document.documentElement.innerHTML = "<head></head><body><main><p>Read this paragraph before continuing.</p></main></body>";
     stored = structuredClone(DEFAULT_SETTINGS);
+    const storageListeners = new Set<typeof storageChanged>();
+    storageChanged = (changes, area) => { for (const listener of storageListeners) listener(changes, area); };
     vi.mocked(sendRuntimeRequest).mockImplementation(async (request: RuntimeRequest) => {
       if (request.type === "GET_SETTINGS") return structuredClone(stored);
       if (request.type === "GET_OCR_STATUS") return { state: "installed", total: 100, downloaded: 100 };
@@ -38,7 +41,10 @@ describe("floating translation interactions", () => {
       runtime: { id: "test" },
       storage: {
         local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) },
-        onChanged: { addListener: (listener: typeof storageChanged) => { storageChanged = listener; } }
+        onChanged: {
+          addListener: (listener: typeof storageChanged) => { storageListeners.add(listener); },
+          removeListener: (listener: typeof storageChanged) => { storageListeners.delete(listener); }
+        }
       }
     });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
@@ -600,6 +606,26 @@ describe("floating translation interactions", () => {
     expect(translationRequests()).toHaveLength(2);
     expect(query(".wupage-translation").textContent).toBe("继续之前，请阅读此段内容。");
     await setParagraphMode(false);
+  });
+
+  it("follows paragraph mode changes from other tabs without clearing existing translations", async () => {
+    await setParagraphMode(true);
+    query("main p").dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    await vi.waitFor(() => expect(document.querySelector(".wupage-translation")?.textContent).toContain("继续之前"));
+    const output = document.querySelector(".wupage-translation");
+    storageChanged({ [PARAGRAPH_MODE_KEY]: { newValue: false } }, "local");
+    expect(getParagraphMode()).toBe(false);
+    expect(document.querySelector(".wupage-translation")).toBe(output);
+    expect(translationRequests()).toHaveLength(1);
+  });
+
+  it("keeps paragraph mode unchanged when its global save fails", async () => {
+    const runtime = vi.mocked(sendRuntimeRequest).getMockImplementation()!;
+    vi.mocked(sendRuntimeRequest).mockImplementation(request => request.type === "SET_PARAGRAPH_MODE"
+      ? Promise.reject(new Error("storage unavailable")) : runtime(request));
+    await expect(setParagraphMode(true)).rejects.toThrow("storage unavailable");
+    expect(getParagraphMode()).toBe(false);
+    expect(document.documentElement.classList.contains("wupage-paragraph-mode")).toBe(false);
   });
 
   it("shows paragraph instructions inline without an extra confirmation", async () => {

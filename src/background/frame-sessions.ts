@@ -11,7 +11,7 @@ const PREFIX = "wupage.frame-session.";
 interface Frame extends FrameDiagnostic { documentKey: string; documentId?: string }
 interface TabSession {
   id: string; revision: number; topDocument: string; topUrl: string;
-  active: boolean; paragraphMode: boolean; settings: ExtensionSettings;
+  active: boolean; settings: ExtensionSettings;
   frames: Map<number, Frame>; controller: AbortController;
   queue: Array<{ frameId: number; run: () => void; reject: (error: Error) => void }>;
   running: number; lastFrame: number;
@@ -147,11 +147,6 @@ export class FrameSessionManager {
       tab.settings = { ...tab.settings, translationDisplayMode: request.mode }; tab.revision++;
       await this.applyAll(tabId, tab, true); this.publish(tabId, tab); return null;
     }
-    if (request.type === "FRAME_SESSION_PARAGRAPH") {
-      tab.paragraphMode = request.enabled; tab.revision++;
-      await this.persist(tabId, tab); await this.applyAll(tabId, tab, true);
-      this.publish(tabId, tab); return null;
-    }
     throw new Error("不支持的框架会话操作。");
   }
 
@@ -222,10 +217,10 @@ export class FrameSessionManager {
       value = (async () => {
         await this.writes.get(tabId)?.catch(() => {});
         const [settings, saved] = await Promise.all([this.readSettings(), this.api.storage?.session?.get(`${PREFIX}${tabId}`)]);
-        const stored = saved?.[`${PREFIX}${tabId}`] as Partial<Pick<TabSession, "id" | "revision" | "topDocument" | "topUrl" | "active" | "paragraphMode" | "paused">> | undefined;
+        const stored = saved?.[`${PREFIX}${tabId}`] as Partial<Pick<TabSession, "id" | "revision" | "topDocument" | "topUrl" | "active" | "paused">> | undefined;
         return { id: stored?.id ?? crypto.randomUUID(), revision: Math.max(Date.now() * 1000, stored?.revision ?? 0),
           topDocument: stored?.topDocument ?? "", topUrl: stored?.topUrl ?? "",
-          active: stored?.active === true, paragraphMode: stored?.paragraphMode === true,
+          active: stored?.active === true,
           paused: stored?.paused?.identity === this.providerIdentity(settings) ? stored.paused : undefined,
           settings, frames: new Map<number, Frame>(), documents: new Map<number, AbortController>(),
           controller: new AbortController(), queue: [], running: 0, lastFrame: -1, controlVersion: 0, settingsRevision: 0, retired: false };
@@ -283,7 +278,7 @@ export class FrameSessionManager {
     }
   }
   private reset(tab: TabSession): void {
-    this.resetGeneration(tab); tab.active = false; tab.paragraphMode = false; tab.revision++;
+    this.resetGeneration(tab); tab.active = false; tab.revision++;
   }
   private snapshot(tab: TabSession): FrameSessionSnapshot {
     const frames = [...tab.frames.values()].map(({ documentKey: _key, documentId: _id, ...frame }): FrameDiagnostic => {
@@ -293,7 +288,7 @@ export class FrameSessionManager {
     const state = aggregateDocumentStates(frames, tab.active);
     if (tab.paused) { state.error = tab.paused.message; state.errorCode = tab.paused.errorCode; state.retryAt = tab.paused.retryAt; }
     return { id: tab.id, revision: tab.revision, active: tab.active, topDocument: tab.topDocument,
-      settings: tab.settings, paragraphMode: tab.paragraphMode, frames, state };
+      settings: tab.settings, frames, state };
   }
   private exclusion(tab: TabSession, frame: FrameDiagnostic): string | undefined {
     const chain: FrameDiagnostic[] = [];
@@ -375,7 +370,7 @@ export class FrameSessionManager {
   }
   private persist(tabId: number, tab: TabSession | null): Promise<unknown> {
     const value = tab ? { id: tab.id, revision: tab.revision, topDocument: tab.topDocument, topUrl: tab.topUrl,
-      active: tab.active, paragraphMode: tab.paragraphMode, ...(tab.paused ? { paused: tab.paused } : {}) } : null;
+      active: tab.active, ...(tab.paused ? { paused: tab.paused } : {}) } : null;
     const write = (this.writes.get(tabId) ?? Promise.resolve()).catch(() => {}).then(() => tab?.retired ? undefined : value
       ? this.api.storage?.session?.set({ [`${PREFIX}${tabId}`]: value }) : this.api.storage?.session?.remove(`${PREFIX}${tabId}`));
     this.writes.set(tabId, write); return write;

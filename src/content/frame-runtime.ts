@@ -12,9 +12,7 @@ import { sampleDocumentText } from "./frame-sample";
 import { hasPageTranslations } from "./dom";
 import { frameIsRendered } from "./frame-visibility";
 
-export function installFrameRuntime(documentKey: string, options: {
-  top: boolean; paragraph?: (enabled: boolean) => void | Promise<void>;
-}) {
+export function installFrameRuntime(documentKey: string, options: { top: boolean }) {
   let snapshot: FrameSessionSnapshot | undefined;
   let appliedId: string | undefined;
   let appliedRevision = -1;
@@ -47,8 +45,6 @@ export function installFrameRuntime(documentKey: string, options: {
     if (value.revision < appliedRevision) return documentState();
     appliedRevision = value.revision;
     updateSnapshot(value);
-    await options.paragraph?.(allowed && value.paragraphMode);
-    if (value.revision < appliedRevision) return documentState();
     if (!allowed || !value.active) {
       appliedId = value.id;
       if (getLocalPageTranslationState().active || hasPageTranslations()) hideLocalPageTranslation();

@@ -2,7 +2,6 @@ import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../shar
 import { hasPageTranslations, refreshTranslationColors } from "./dom";
 import {
   getFloatingBallEnabled,
-  getParagraphMode,
   initFloatingBall,
   openDebugPanel,
   setFloatingBallEnabled,
@@ -27,6 +26,7 @@ import { initKeyboardShortcuts } from "./keyboard-shortcuts";
 import { installFrameRuntime } from "./frame-runtime";
 import { createDocumentKey } from "../shared/frame-session";
 import { initVideoSubtitles, openVideoSubtitles } from "./video-subtitles";
+import { readParagraphMode } from "../shared/paragraph-mode";
 
 
 
@@ -46,8 +46,7 @@ addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
 });
 
 injectContentStyles();
-if (chrome.runtime?.id && typeof chrome.runtime.onMessage?.addListener === "function") installFrameRuntime(createDocumentKey(), { top: true,
-  paragraph: enabled => setParagraphMode(enabled, false) });
+if (chrome.runtime?.id && typeof chrome.runtime.onMessage?.addListener === "function") installFrameRuntime(createDocumentKey(), { top: true });
 const appearance = setupAppearance(undefined, { extensionPage: false, onChange: scheme => {
   refreshTranslationColors({ light: scheme.colors["translation-light"], dark: scheme.colors["translation-dark"] });
 } });
@@ -95,12 +94,12 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
   }
 
   if (request.type === "GET_PARAGRAPH_MODE") {
-    return { enabled: getParagraphMode() };
+    return { enabled: await readParagraphMode() };
   }
 
   if (request.type === "SET_PARAGRAPH_MODE") {
     await setParagraphMode(request.enabled);
-    return { enabled: getParagraphMode() };
+    return { enabled: await readParagraphMode() };
   }
 
   if (request.type === "GET_FLOATING_BALL") {

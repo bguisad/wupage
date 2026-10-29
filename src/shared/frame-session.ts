@@ -36,7 +36,6 @@ export interface FrameSessionSnapshot {
   active: boolean;
   topDocument: string;
   settings: ExtensionSettings;
-  paragraphMode: boolean;
   frames: FrameDiagnostic[];
   state: DocumentTranslationState;
 }
@@ -48,7 +47,6 @@ export type FrameSessionRequest =
   | { type: "FRAME_SESSION_GET" }
   | { type: "FRAME_SESSION_ACTION"; action: "start" | "stop"; settings?: ExtensionSettings; reuseResults?: boolean }
   | { type: "FRAME_SESSION_MODE"; mode: TranslationDisplayMode }
-  | { type: "FRAME_SESSION_PARAGRAPH"; enabled: boolean }
   | { type: "FRAME_SESSION_SAMPLES" }
   | { type: "FRAME_FORWARD_SHORTCUT"; command: import("./shortcuts").TranslationShortcut }
   | { type: "FRAME_APPLY"; documentKey: string; snapshot: FrameSessionSnapshot; allowed: boolean; reuseResults: boolean }
