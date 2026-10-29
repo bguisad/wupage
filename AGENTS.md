@@ -26,6 +26,8 @@
 
 Chrome 与 Edge 共用 `npm run build` 生成的 Chromium MV3 构建（`dist/`），分别发布 `wupage-<version>-chrome.zip`、`wupage-<version>-edge.zip`。两者 ZIP 根目录均为 Manifest 所在目录，不含 source map；Edge 商店提交流程仍读取 `edge.zip`。
 
+扩展安装包只能有根目录的一个 `manifest.json`。资源目录内的来源说明或数据清单须使用其他文件名，例如 `pdf-fonts/font-metadata.json`；Edge 会将嵌套的同名文件判为无效扩展包。`tests/extension-package.test.ts` 检查公共资源目录及 PDF 字体来源校验，Edge 提交脚本也会在上传前拒绝重复清单。
+
 稳定版的三个版本号必须保持一致。以 `v1.1.0` 为例：
 
 ```bash

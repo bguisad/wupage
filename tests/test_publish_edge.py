@@ -115,6 +115,25 @@ class PublishEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'invalid operation Location'):
                 self.client.start_operation('/submissions', b'{}', 'application/json')
 
+    def test_nested_manifests_are_rejected_before_upload(self):
+        for name in ('pdf-fonts/manifest.json', 'assets/Manifest.JSON', 'assets\\manifest.json'):
+            with self.subTest(name=name):
+                self.write_package()
+                buffer = io.BytesIO(self.package_bytes)
+                with ZipFile(buffer, 'a') as archive:
+                    archive.writestr(name, '{}')
+                self.package_bytes = buffer.getvalue()
+                with patch.object(publish_edge, 'urlopen') as send:
+                    with self.assertRaisesRegex(ValueError, 'exactly one manifest.json'):
+                        publish_edge.publish_package(self.client, self.package, 'v1.1.3')
+                    send.assert_not_called()
+
+    def test_font_provenance_metadata_is_allowed(self):
+        buffer = io.BytesIO(self.package_bytes)
+        with ZipFile(buffer, 'a') as archive:
+            archive.writestr('pdf-fonts/font-metadata.json', '{}')
+        publish_edge.validate_package(buffer.getvalue(), 'v1.1.3')
+
     def test_accepted_poll_responses_wait_for_success(self):
         empty = Response(202)
         empty.body = b''

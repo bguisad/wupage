@@ -24,8 +24,11 @@ def validate_package(package, tag):
     if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
         raise ValueError('Only stable v<major>.<minor>.<patch> releases can be submitted.')
     with ZipFile(io.BytesIO(package)) as archive:
-        if 'manifest.json' not in archive.namelist():
-            raise ValueError('The ZIP must contain manifest.json at its root.')
+        manifests = [name for name in archive.namelist()
+                     if name.replace('\\', '/').rsplit('/', 1)[-1].lower() == 'manifest.json']
+        if manifests != ['manifest.json']:
+            raise ValueError('The ZIP must contain exactly one manifest.json, at its root. '
+                             f'Found: {manifests}')
         manifest = json.loads(archive.read('manifest.json'))
     version = tag[1:]
     if manifest.get('version') != version or manifest.get('version_name', version) != version:
