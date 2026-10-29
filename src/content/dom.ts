@@ -1462,6 +1462,8 @@ function findGroupingBlock(element: Element | null): Element | null {
   if (compactNavigationTarget) return compactNavigationTarget;
   const compactControlTarget = getCompactControlTarget(element);
   if (compactControlTarget) return compactControlTarget;
+  const singleLineTarget = getSingleLineTextTarget(element);
+  if (singleLineTarget) return constrainGroupingToLayoutSlot(element, singleLineTarget);
 
   const readableBlock = element.closest(
     `${SEMANTIC_TEXT_BLOCK_SELECTOR}, label, summary, ${X_POST_TEXT_SELECTOR}`
@@ -1506,6 +1508,33 @@ function findGroupingBlock(element: Element | null): Element | null {
 
 function isLayoutContainer(element: Element): boolean {
   return /^(?:inline-)?(?:flex|grid)$/u.test(window.getComputedStyle(element).display);
+}
+
+// Inbox/result rows put rich text inside a clipped, single-line wrapper.
+// Grouping at the surrounding table cell moves the result outside that box.
+// Keep the first independent text field (subject, preview, sender) in place.
+function getSingleLineTextTarget(element: Element): Element | null {
+  let container: Element | null = element;
+  while (container && container !== document.body) {
+    const style = window.getComputedStyle(container);
+    if (style.whiteSpace === "nowrap"
+      && (/(?:hidden|clip)/u.test(`${style.overflow} ${style.overflowX}`) || style.textOverflow === "ellipsis")) {
+      let field = container;
+      // A single wrapper often sits between the clipping box and its fields.
+      // Only descend through wrappers with no authored text of their own.
+      while (field.children.length && !Array.from(field.childNodes).some(node =>
+        node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()))) {
+        const child = Array.from(field.children).find(child => child === element || child.contains(element));
+        if (!child) break;
+        field = child;
+        if (field.parentElement!.children.length > 1) break;
+      }
+      return field;
+    }
+    if (container.matches(`${SEMANTIC_TEXT_BLOCK_SELECTOR},li,article,main,[role='main']`)) break;
+    container = container.parentElement;
+  }
+  return null;
 }
 
 // A semantic paragraph/list item may itself arrange several independent cells.

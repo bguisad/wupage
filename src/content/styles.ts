@@ -36,6 +36,9 @@ export function injectContentStyles(): void {
       color: inherit;
       font-size: 0.92em;
       line-height: inherit;
+      white-space: inherit;
+      overflow-wrap: inherit;
+      word-break: inherit;
     }
 
     .wupage-translation[data-wupage-mode="code-comment"] {

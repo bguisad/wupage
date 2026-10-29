@@ -7,13 +7,44 @@ import {
 describe("translation layout boundaries", () => {
   beforeEach(() => {
     vi.spyOn(window, "getComputedStyle").mockImplementation(element => ({
-      display: (element as HTMLElement).style.display || "block", visibility: "visible", opacity: "1", color: "rgb(0, 0, 0)"
+      display: (element as HTMLElement).style.display || "block", visibility: "visible", opacity: "1", color: "rgb(0, 0, 0)",
+      whiteSpace: (element as HTMLElement).style.whiteSpace,
+      overflow: (element as HTMLElement).style.overflow,
+      overflowX: (element as HTMLElement).style.overflowX,
+      textOverflow: (element as HTMLElement).style.textOverflow
     }) as CSSStyleDeclaration);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
       width: 600, height: 20, top: 0, right: 600, bottom: 20, left: 0, x: 0, y: 0, toJSON: () => ({})
     });
   });
   afterEach(() => { clearTranslations(); vi.restoreAllMocks(); document.body.innerHTML = ""; });
+
+  it.each(["td", "div"])("keeps inbox subject and preview inside their original clipped %s line", tag => {
+    const content = `<div class="slot"><div id="clip" style="overflow:hidden;white-space:nowrap"><div>
+      <span id="subject">Release <strong>workflow failed</strong></span><span id="preview"> - <span>Review the publishing status.</span></span>
+      </div></div></div>`;
+    document.body.innerHTML = tag === "td" ? `<main><table><tbody><tr><td>${content}</td></tr></tbody></table></main>`
+      : `<main><div role="row"><div role="gridcell">${content}</div></div></main>`;
+    const original = document.querySelector("main")!.innerHTML;
+    const segments = collectTextSegments();
+    expect(segments.map(s => s.text)).toEqual(["Release workflow failed", "- Review the publishing status."]);
+    renderTranslationPlaceholders(segments);
+    expect(document.querySelector('.slot > .wupage-translation,td > .wupage-translation')).toBeNull();
+    renderTranslations(segments.map(({id,text}) => ({id,text:`译文：${text}`})), "replace");
+    for (const mode of ["replace", "bilingual", "bilingual-accent"] as const) {
+      setTranslationDisplayMode(mode);
+      expect(document.querySelector('#subject .wupage-translation')?.textContent).toBe("译文：Release workflow failed");
+      expect(document.querySelector('#preview .wupage-translation')?.textContent).toBe("译文：- Review the publishing status.");
+      expect(document.querySelector('.slot > .wupage-translation,td > .wupage-translation,tr > .wupage-translation')).toBeNull();
+    }
+    clearTranslations();
+    expect(document.querySelector("main")!.innerHTML).toBe(original);
+  });
+
+  it("keeps a clipped rich sentence together when it has authored text around emphasis", () => {
+    document.body.innerHTML = `<main><div style="overflow:hidden;white-space:nowrap">A complete <em>rich sentence</em> in one line.</div></main>`;
+    expect(collectTextSegments().map(s => s.text)).toEqual(["A complete rich sentence in one line."]);
+  });
 
   it.each(["flex", "grid"])("keeps sidebar labels in their text cell beside font icons in %s links", display => {
     document.body.innerHTML = `<aside><ul><li><a id="nav-item" href="/overview" style="display:${display}">

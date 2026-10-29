@@ -26,6 +26,8 @@
 
 构建后运行 `npm run test:profile-layout`、`npm run test:profile-layout:firefox` 和 `npm run test:profile-layout:edge`，使用独立 Chrome、Firefox、Edge 配置和本地模拟服务验证宽窄窗口、三种显示模式、卡片宽度、译文边界、描述去重、数字位置和原文节点恢复。环境变量与框架回归相同；直接运行 `node scripts/test-profile-layout.mjs --live`（可加 `--firefox` 或 `--edge`）还会验证 GitHub 个人页。报告与截图按浏览器分别保存在 `.npm-cache/profile-layout/` 下。原有紧凑控件、动态内容和富文本链接回归也可通过 `npm run test:cards:edge` 在 Edge 中执行，产物保存在 `.npm-cache/card-layout/edge/`。
 
+邮件列表等单行省略区域在 `src/content/dom.ts` 中按原有文字字段分组，主题和摘要保留在裁剪容器内；行内译文继承页面的换行规则。构建后运行 `npm run test:mail-layout`、`npm run test:mail-layout:edge` 和 `npm run test:mail-layout:firefox`，使用本地模拟邮件和独立浏览器配置检查表格与 ARIA Grid 的行高、列宽、主题和摘要分离、时间不折行、加载状态、动态新增行、复选框交互、正文换行及原文恢复。不会访问真实邮箱；截图和报告位于 `.npm-cache/mail-layout/<browser>/`。
+
 ### 旧式论文页面翻译
 
 `src/content/legacy-scientific.ts` 识别 LaTeX2HTML 生成标记，将页面根节点下连续的行内内容临时组织为段落，并在清理时还原原始节点。正文中的公式图片和数字引用使用已有的受保护标记协议，译文复用公式图片和引用链接；独立公式、编号和公式图片的替代文本不送去翻译。
