@@ -34,6 +34,39 @@ describe("appearance editor", () => {
     await vi.waitFor(() => expect(query("#providerTriggerLabel").textContent).toBe("Microsoft 翻译"));
   }
 
+  it("previews, reorders and saves selected menu functions without changing feature switches", async () => {
+    await mount();
+    query<HTMLButtonElement>("#appearanceMenuTab").click();
+    expect(query<HTMLElement>("#appearanceMenuPanel").hidden).toBe(false);
+    query<HTMLInputElement>('[data-menu-visible="videoTranslation"]').click();
+    query<HTMLButtonElement>('[data-menu-move="floatingBall:-1"]').click();
+    expect(query('#popupMenuPreview [data-popup-menu-item="videoTranslation"]').hasAttribute("data-popup-menu-hidden")).toBe(true);
+    const features = query('#popupMenuPreview [data-popup-menu-group="features"]');
+    expect((features.firstElementChild as HTMLElement).dataset.popupMenuItem).toBe("floatingBall");
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(stored.appearance?.popupMenu.hidden).toContain("videoTranslation"));
+    expect(stored.appearance!.popupMenu.order.indexOf("floatingBall")).toBeLessThan(stored.appearance!.popupMenu.order.indexOf("contextMenuTranslation"));
+    expect(stored.floatingBallEnabled).toBe(true);
+    expect(stored.videoTranslation).toBeUndefined();
+  });
+
+  it("resets only the menu draft and supports keyboard navigation between appearance tabs", async () => {
+    stored.appearance = { ...structuredClone(DEFAULT_APPEARANCE), lightSchemeId: "paper", floatingOpacity: 61 };
+    await mount();
+    const colors = query<HTMLButtonElement>("#appearanceColorsTab"); colors.focus();
+    colors.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(query("#appearanceMenuTab"));
+    expect(query<HTMLElement>("#appearanceMenuPanel").hidden).toBe(false);
+    query<HTMLInputElement>('[data-menu-visible="debug"]').click();
+    query<HTMLButtonElement>("#resetPopupMenu").click();
+    expect(query<HTMLInputElement>('[data-menu-visible="debug"]').checked).toBe(true);
+    query<HTMLButtonElement>("#save").click();
+    await vi.waitFor(() => expect(query("#status").textContent).toBe("已保存。"));
+    expect(stored.appearance?.popupMenu.hidden).toEqual([]);
+    expect(stored.appearance?.lightSchemeId).toBe("paper");
+    expect(stored.appearance?.floatingOpacity).toBe(61);
+  });
+
   it("copies, previews and saves a custom palette together with drafts in other categories", async () => {
     await mount();
     expect(query<HTMLElement>("#appearanceSettings").hidden).toBe(false);

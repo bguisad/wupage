@@ -1,4 +1,5 @@
 import { uiIconUrl } from "./ui-icons";
+import { DEFAULT_POPUP_MENU, normalizePopupMenu, type PopupMenuLayout } from "./popup-menu";
 
 export type AppearanceMode = "system" | "light" | "dark";
 export type AppearanceTone = "light" | "dark";
@@ -33,6 +34,7 @@ export interface ColorScheme {
   colors: AppearanceColors;
 }
 export interface AppearanceSettings {
+  popupMenu: PopupMenuLayout;
   mode: AppearanceMode;
   floatingOpacity: number;
   lightSchemeId: string;
@@ -86,6 +88,7 @@ export const BUILT_IN_SCHEMES: readonly ColorScheme[] = [
 ];
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
+  popupMenu: DEFAULT_POPUP_MENU,
   mode: "system", floatingOpacity: 100, lightSchemeId: "wupage-light", darkSchemeId: "wupage-dark", customSchemes: []
 };
 
@@ -117,6 +120,7 @@ export function normalizeAppearance(value: unknown): AppearanceSettings {
   }
   const all = [...BUILT_IN_SCHEMES, ...customSchemes];
   return {
+    popupMenu: normalizePopupMenu(input.popupMenu),
     mode: input.mode === "light" || input.mode === "dark" ? input.mode : "system",
     floatingOpacity: typeof input.floatingOpacity === "number" && Number.isFinite(input.floatingOpacity)
       ? Math.max(0, Math.min(100, Math.round(input.floatingOpacity))) : DEFAULT_APPEARANCE.floatingOpacity,

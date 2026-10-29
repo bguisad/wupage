@@ -3,6 +3,7 @@ import { applyColorScheme, BUILT_IN_SCHEMES, COLOR_FIELDS, COLOR_GROUPS, DEFAULT
 import { setupAppearance } from "../shared/appearance-runtime";
 import { mapTranslationTextColor } from "../shared/translation-colors";
 import "./appearance.css";
+import { setupPopupMenuControls } from "./popup-menu";
 
 export function setupAppearanceControls(root: HTMLElement): {
   render: (value: unknown) => void;
@@ -14,6 +15,24 @@ export function setupAppearanceControls(root: HTMLElement): {
   const name = query<HTMLInputElement>("#appearanceSchemeName");
   const status = query<HTMLElement>("#appearanceStatus");
   const duplicate = query<HTMLButtonElement>("#duplicateScheme");
+  const menu = setupPopupMenuControls(query<HTMLElement>("#popupMenuEditor"));
+  const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-appearance-tab]")];
+  function selectTab(name: string): void {
+    for (const tab of tabs) {
+      const selected = tab.dataset.appearanceTab === name;
+      tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
+    }
+    for (const panel of root.querySelectorAll<HTMLElement>("[data-appearance-panel]")) panel.hidden = panel.dataset.appearancePanel !== name;
+  }
+  for (const [index, tab] of tabs.entries()) {
+    tab.addEventListener("click", () => selectTab(tab.dataset.appearanceTab!));
+    tab.addEventListener("keydown", event => {
+      const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+        : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+      if (next < 0) return;
+      event.preventDefault(); selectTab(tabs[next].dataset.appearanceTab!); tabs[next].focus();
+    });
+  }
   let draft = normalizeAppearance(undefined);
   let tone: AppearanceTone = "light";
   let initialized = false;
@@ -200,6 +219,7 @@ export function setupAppearanceControls(root: HTMLElement): {
   return {
     render(value) {
       draft = normalizeAppearance(value);
+      menu.render(draft.popupMenu);
       status.textContent = "";
       if (!initialized) {
         tone = draft.mode === "system"
@@ -214,13 +234,14 @@ export function setupAppearanceControls(root: HTMLElement): {
     read() {
       const invalid = root.querySelector<HTMLInputElement>("[aria-invalid='true']");
       if (invalid) {
+        selectTab("colors");
         const group = invalid.closest("details");
         if (group) group.open = true;
         invalid.focus();
         throw new Error(invalid === name ? "请填写配色方案名称。" : invalid.id === "floatingOpacityNumber"
           ? "请输入 0 到 100 之间的整数透明度。" : "请输入完整的十六进制颜色，例如 #116466。");
       }
-      return normalizeAppearance(draft);
+      return normalizeAppearance({ ...draft, popupMenu: menu.read() });
     }
   };
 }

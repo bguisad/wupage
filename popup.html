@@ -7,7 +7,7 @@
     <script type="module" src="/src/popup/index.ts"></script>
   </head>
   <body>
-    <main class="popup">
+    <main class="popup" data-menu-loading>
       <div class="popup-top">
         <header>
           <h1>WuPage</h1>
@@ -43,20 +43,20 @@
         翻译模式
         <select id="translationDisplayMode" disabled></select>
       </label>
-      <div class="feature-toggles" role="group" aria-label="翻译功能">
-        <button id="contextMenuTranslation" type="button" class="feature-button" disabled title="右键点击网页，通过菜单翻译全文或恢复原文">
+      <div class="feature-toggles" role="group" aria-label="翻译功能" data-popup-menu-group="features">
+        <button id="contextMenuTranslation" data-popup-menu-item="contextMenuTranslation" type="button" class="feature-button" disabled title="右键点击网页，通过菜单翻译全文或恢复原文">
           <span>右键翻译</span>
           <span class="feature-indicator" aria-hidden="true"></span>
         </button>
-        <button id="floatingBall" type="button" class="feature-button" disabled>
+        <button id="floatingBall" data-popup-menu-item="floatingBall" type="button" class="feature-button" disabled>
           <span>悬浮球</span>
           <span class="feature-indicator" aria-hidden="true"></span>
         </button>
-        <button id="selectionTranslation" type="button" class="feature-button" disabled title="选中文字后显示查词或翻译入口">
+        <button id="selectionTranslation" data-popup-menu-item="selectionTranslation" type="button" class="feature-button" disabled title="选中文字后显示查词或翻译入口">
           <span>划词翻译</span>
           <span class="feature-indicator" aria-hidden="true"></span>
         </button>
-        <div class="image-feature" data-loading aria-busy="true">
+        <div class="image-feature" data-popup-menu-item="imageTranslation" data-loading aria-busy="true">
           <div class="image-feature-row">
             <button id="imageTranslation" type="button" class="feature-button" disabled aria-describedby="ocrDescription ocrModelStatus" title="开启后，点击图片旁的按钮翻译并覆盖原文">
               <span>图片翻译</span>
@@ -69,39 +69,37 @@
           <progress id="ocrModelProgress" class="ocr-model-progress" aria-label="OCR 模型下载进度" hidden></progress>
           <p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
         </div>
-        <button id="videoTranslation" type="button" class="feature-button" data-loading disabled aria-pressed="false" title="在所有网页显示字幕翻译入口；关闭后停止字幕翻译并恢复原字幕">
+        <button id="videoTranslation" data-popup-menu-item="videoTranslation" data-popup-menu-wide type="button" class="feature-button" data-loading disabled aria-pressed="false" title="在所有网页显示字幕翻译入口；关闭后停止字幕翻译并恢复原字幕">
           <span>视频字幕</span>
           <span class="feature-indicator" aria-hidden="true"></span>
         </button>
       </div>
-      <div class="actions translation-actions">
-        <button id="pageToggle" type="button" disabled>翻译全文</button>
-        <button id="paragraphMode" type="button" class="feature-button" aria-pressed="false" aria-describedby="paragraphModeHint" disabled>
+      <div class="actions translation-actions" data-popup-menu-group="translation">
+        <button id="pageToggle" data-popup-menu-item="pageToggle" type="button" disabled>翻译全文</button>
+        <button id="paragraphMode" data-popup-menu-item="paragraphMode" type="button" class="feature-button" aria-pressed="false" aria-describedby="paragraphModeHint" disabled>
           <span>段落翻译</span>
           <span class="feature-indicator" aria-hidden="true"></span>
         </button>
       </div>
       <span id="paragraphModeHint" class="field-description" hidden>所有网页生效；按住 Ctrl 点击段落翻译，再次点击恢复原文。</span>
-      <div class="actions">
-        <button id="openPdfWorkspace" type="button" class="secondary">打开 PDF</button>
-      </div>
-      <div class="actions">
-        <button id="debug" type="button" class="secondary">Debug</button>
-        <button id="clearCache" type="button" class="secondary">清除缓存</button>
+      <div class="actions utility-actions" data-popup-menu-group="tools">
+        <button id="openPdfWorkspace" data-popup-menu-item="openPdfWorkspace" data-popup-menu-wide type="button" class="secondary">打开 PDF</button>
+        <button id="debug" data-popup-menu-item="debug" type="button" class="secondary">Debug</button>
+        <button id="clearCache" data-popup-menu-item="clearCache" type="button" class="secondary">清除缓存</button>
       </div>
       <p id="status" role="status"></p>
       <div id="fileAccessHelp" hidden>
         <p class="file-access-instructions">在扩展详情中开启「允许访问文件网址」或「允许访问文件 URL」，然后回到 PDF 重新打开 WuPage。</p>
         <button id="openFileAccessSettings" type="button" class="secondary">打开扩展设置</button>
       </div>
-      <div class="footer-links">
-        <button id="openGithub" type="button" class="footer-link">
+      <div class="footer-links" data-popup-menu-group="links">
+        <button id="openGithub" data-popup-menu-item="openGithub" type="button" class="footer-link">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.04c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.31-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.23a11.4 11.4 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .5Z" />
           </svg>
           <span>GitHub</span>
         </button>
-        <button id="openWebsite" type="button" class="footer-link">
+        <button id="openWebsite" data-popup-menu-item="openWebsite" type="button" class="footer-link">
           <span data-wupage-icon="internet" aria-hidden="true"></span>
           <span>官网</span>
         </button>

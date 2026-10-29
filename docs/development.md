@@ -216,6 +216,10 @@ npm run test:page
 
 ### 外观配置与验证
 
+「菜单功能」在 `appearance.popupMenu` 中保存入口顺序与隐藏项，目录和兼容性规范化位于 `src/shared/popup-menu.ts`。旧配置默认显示全部入口，新入口追加到所属组；未知 ID 和重复项会过滤。弹窗按组移动现有节点以保留事件、功能状态与 OCR 控件，隐藏空组并按可见项填满行；段落模式的触屏限制独立生效。设置入口与语言、服务、显示模式固定保留。`src/options/popup-menu.ts` 提供勾选、键盘可用的排序按钮、预览和仅重置菜单的草稿操作，保存复用现有外观设置流程。
+
+构建后运行 `npm run test:menu-layout`、`npm run test:menu-layout:edge`、`npm run test:menu-layout:firefox`，以独立浏览器配置验证 12 个入口的选择与组内顺序、保存前预览、已打开弹窗同步、节点与按钮行为保留、旧弹窗保存兼容、空组收起、恢复默认及宽窄窗口。报告与截图保存在 `.npm-cache/menu-layout/<browser>/`。单元测试另覆盖旧配置兼容、异常 ID、重复项、触屏能力限制和无关设置保存不产生布局变更。
+
 `src/shared/appearance.ts` 管理内置方案、自定义颜色校验和明暗方案选择；`appearance-runtime.ts` 监听系统明暗及本地设置变化，通过 `--wp-*` 变量应用到扩展界面。网页中只注入扩展专用变量，不修改宿主页面的 `color-scheme`；划词卡片在 Shadow DOM 中继承同一组变量。`src/options/appearance.ts` 保存独立表单草稿，与其他设置分类一起提交。
 
 配色按界面、悬浮球、译文与段落、划词翻译、图片入口分组。`src/shared/translation-colors.ts` 共用网页背景识别和对比度处理；内容脚本在方案或系统明暗变化时原地更新已渲染的双色译文，包括段落翻译和图片段落，不重新发送翻译请求。旧自定义方案缺少组件颜色时从原有界面色补齐。

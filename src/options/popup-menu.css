@@ -1,0 +1,33 @@
+.appearance-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 22px; width: fit-content; border-radius: 8px; background: var(--wp-soft); }
+.appearance-tabs button { min-height: 36px; padding: 7px 18px; color: var(--wp-muted); background: transparent; }
+.appearance-tabs [aria-selected="true"] { color: var(--wp-accent); background: var(--wp-surface); box-shadow: 0 1px 4px #00000012; }
+[data-appearance-panel][hidden] { display: none; }
+.menu-layout-description { margin: 0 0 20px; line-height: 1.8; }
+.menu-layout-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .85fr); gap: 28px; align-items: start; }
+.menu-layout-groups { display: grid; gap: 16px; min-width: 0; }
+.menu-layout-group { margin: 0; padding: 8px 12px; min-width: 0; border: 1px solid var(--wp-border); border-radius: 8px; }
+.menu-layout-group legend { padding: 0 6px; color: var(--wp-foreground); font-size: 13px; font-weight: 600; }
+.menu-layout-row { display: flex; align-items: center; gap: 6px; min-height: 42px; }
+.menu-layout-row label { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--wp-foreground); cursor: pointer; }
+.menu-layout-row input[type="checkbox"] { flex: 0 0 16px; width: 16px; min-height: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--wp-accent); }
+.menu-layout-move { flex: 0 0 30px; width: 30px; min-height: 30px; padding: 0; font-size: 17px; }
+.menu-layout-preview-area { position: sticky; top: 20px; min-width: 0; }
+.menu-layout-preview-area h3 { margin: 0 0 14px; font-size: 14px; }
+.menu-layout-preview-area > p { margin-top: 14px; line-height: 1.8; }
+.menu-layout-preview { display: grid; gap: 12px; max-width: 330px; padding: 14px; border: 1px solid var(--wp-border); border-radius: 10px; background: var(--wp-background); color: var(--wp-foreground); }
+.menu-layout-preview-header { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
+.menu-layout-preview-header > svg, .menu-layout-preview-header > span { width: 20px; height: 20px; color: var(--wp-muted); }
+.menu-layout-preview-language { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.menu-layout-preview-field { padding: 8px 10px; border: 1px solid var(--wp-border); border-radius: 6px; color: var(--wp-muted); background: var(--wp-surface); font-size: 12px; }
+.menu-layout-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.menu-layout-preview [data-popup-menu-item] { min-width: 0; min-height: 36px; padding: 0 6px; border: 0; border-radius: 6px; background: var(--wp-border); color: var(--wp-foreground); font-size: 12px; opacity: 1 !important; cursor: default; }
+.menu-layout-preview .menu-preview-feature { border: 2px dashed var(--wp-border); background: var(--wp-surface); }
+.menu-layout-preview .menu-preview-primary { background: var(--wp-accent); color: var(--wp-on-accent); }
+.menu-layout-preview-links { display: flex; justify-content: center; gap: 14px; }
+.menu-layout-preview-links [data-popup-menu-item] { background: transparent; color: var(--wp-muted); }
+.menu-layout-preview [data-popup-menu-group][hidden], .menu-layout-preview [data-popup-menu-hidden] { display: none !important; }
+.menu-layout-preview [data-popup-menu-wide] { grid-column: 1 / -1; }
+@container settings (max-width: 680px) {
+  .menu-layout-columns { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .menu-layout-preview-area { position: static; }
+}

@@ -17,6 +17,8 @@ import { renderUiIcons, uiIconMarkup } from "../shared/ui-icons";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
 import { observeParagraphMode } from "../shared/paragraph-mode";
 import { normalizeVideoTranslation } from "../shared/video";
+import { normalizeAppearance } from "../shared/appearance";
+import { applyPopupMenuLayout } from "../shared/popup-menu";
 
 renderUiIcons();
 
@@ -111,6 +113,7 @@ async function init(): Promise<void> {
   const pointerMedia = window.matchMedia?.("(any-hover: none) and (any-pointer: coarse)");
   const updateParagraphVisibility = () => {
     paragraphModeButton.hidden = pointerMedia?.matches === true;
+    refreshMenuLayout();
     updateParagraphModeButton();
   };
   updateParagraphVisibility();
@@ -231,6 +234,7 @@ function settingsChanged(changes: Record<string, chrome.storage.StorageChange>, 
 
 function applyPopupSettings(incoming: ExtensionSettings): void {
   settings = incoming;
+  refreshMenuLayout();
   if (sourceLang.value !== settings.sourceLang) renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
   if (targetLang.value !== settings.targetLang) renderLanguageOptions(targetLang, settings.targetLang, TARGET_LANGUAGES);
   const providers = settings.providers.filter(entry => entry.enabled !== false);
@@ -667,6 +671,11 @@ async function clearCache(): Promise<void> {
   }
 }
 
+function refreshMenuLayout(): void {
+  applyPopupMenuLayout(document, normalizeAppearance(settings.appearance).popupMenu);
+  document.querySelector(".popup")?.removeAttribute("data-menu-loading");
+}
+
 function updateVideoTranslationButton(): void {
   const value = String(normalizeVideoTranslation(settings.videoTranslation).enabled);
   if (videoTranslationButton.getAttribute("aria-pressed") !== value) videoTranslationButton.setAttribute("aria-pressed", value);
@@ -689,7 +698,7 @@ async function toggleVideoTranslation(): Promise<void> {
 function updateParagraphModeButton(): void {
   const value = String(paragraphMode);
   if (paragraphModeButton.getAttribute("aria-pressed") !== value) paragraphModeButton.setAttribute("aria-pressed", value);
-  const hideHint = !paragraphMode || paragraphModeButton.hidden;
+  const hideHint = !paragraphMode || paragraphModeButton.hidden || paragraphModeButton.hasAttribute("data-popup-menu-hidden");
   if (paragraphModeHint.hidden !== hideHint) paragraphModeHint.hidden = hideHint;
 }
 

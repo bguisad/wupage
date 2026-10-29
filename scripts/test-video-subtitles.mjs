@@ -83,7 +83,7 @@ try {
       const video = document.querySelector('#videoTranslation'), features = document.querySelector('.feature-toggles');
       return { grouped: features.contains(video), width: video.getBoundingClientRect().width, groupWidth: features.getBoundingClientRect().width,
         beforeActions: video.getBoundingClientRect().bottom <= document.querySelector('.translation-actions').getBoundingClientRect().top,
-        pdfAlone: document.querySelector('#openPdfWorkspace').parentElement.children.length === 1 };
+        pdfAlone: document.querySelector('#openPdfWorkspace').getBoundingClientRect().width === document.querySelector('#openPdfWorkspace').parentElement.clientWidth };
     });
     assert.ok(layout.grouped && layout.beforeActions && layout.pdfAlone && Math.abs(layout.width - layout.groupWidth) < 1);
     await popup.screenshot({ path: path.join(output, `popup-${width}.png`) });

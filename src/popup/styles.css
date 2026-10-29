@@ -31,6 +31,23 @@ header,
   width: 100%;
 }
 
+.translation-actions, .utility-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+[data-popup-menu-group][hidden], [data-popup-menu-hidden] {
+  display: none !important;
+}
+
+[data-popup-menu-group] > [data-popup-menu-wide] {
+  grid-column: 1 / -1;
+}
+
+.popup[data-menu-loading] [data-popup-menu-group], .popup[data-menu-loading] #paragraphModeHint {
+  visibility: hidden;
+}
+
 .translation-actions button {
   min-height: 40px;
   font-size: 14px;
@@ -275,10 +292,6 @@ button.secondary {
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-#videoTranslation {
-  grid-column: 1 / -1;
 }
 
 .feature-button[aria-pressed="true"] {

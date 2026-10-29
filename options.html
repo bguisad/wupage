@@ -189,8 +189,13 @@
           <section id="appearanceSettings" class="settings-panel" aria-labelledby="appearanceSettingsTitle" hidden>
             <div class="settings-panel-heading">
               <h2 id="appearanceSettingsTitle">外观</h2>
-              <p>选择明暗模式，打造自己的 WuPage 配色。</p>
+              <p>选择明暗配色，调整弹窗中的常用功能。</p>
             </div>
+            <div class="appearance-tabs" role="tablist" aria-label="外观设置">
+              <button id="appearanceColorsTab" type="button" role="tab" data-appearance-tab="colors" aria-selected="true" aria-controls="appearanceColorsPanel">配色与外观</button>
+              <button id="appearanceMenuTab" type="button" role="tab" data-appearance-tab="menu" aria-selected="false" aria-controls="appearanceMenuPanel" tabindex="-1">菜单功能</button>
+            </div>
+            <div id="appearanceColorsPanel" data-appearance-panel="colors" role="tabpanel" aria-labelledby="appearanceColorsTab">
             <fieldset class="appearance-mode-field">
               <legend>界面模式</legend>
               <div class="appearance-modes">
@@ -250,6 +255,34 @@
                 </div>
                 <p class="field-description">预览当前编辑的配色，悬停「译」可查看悬浮球悬停色。保存后同步更新界面、控件和已有双色译文。</p>
               </aside>
+            </div>
+            </div>
+            <div id="appearanceMenuPanel" data-appearance-panel="menu" role="tabpanel" aria-labelledby="appearanceMenuTab" hidden>
+              <div id="popupMenuEditor">
+                <div class="appearance-section-heading">
+                  <h3>弹窗菜单</h3>
+                  <button id="resetPopupMenu" type="button" class="secondary">恢复默认布局</button>
+                </div>
+                <p class="field-description menu-layout-description">勾选要显示的入口，使用上移、下移调整组内顺序。隐藏入口后，已开启的功能和快捷键保持当前设置。</p>
+                <div class="menu-layout-columns">
+                  <div id="popupMenuItems" class="menu-layout-groups"></div>
+                  <aside class="menu-layout-preview-area" aria-labelledby="popupMenuPreviewTitle">
+                    <h3 id="popupMenuPreviewTitle">布局预览</h3>
+                    <div id="popupMenuPreview" class="menu-layout-preview">
+                      <div class="menu-layout-preview-header"><strong>WuPage</strong><span data-wupage-icon="settings" aria-hidden="true"></span></div>
+                      <div class="menu-layout-preview-language">自动检测 <span aria-hidden="true">→</span> 中文</div>
+                      <div class="menu-layout-preview-field">翻译服务</div>
+                      <div class="menu-layout-preview-field">翻译模式</div>
+                      <div data-popup-menu-group="features" class="menu-layout-preview-grid"></div>
+                      <div data-popup-menu-group="translation" class="menu-layout-preview-grid"></div>
+                      <div data-popup-menu-group="tools" class="menu-layout-preview-grid"></div>
+                      <div data-popup-menu-group="links" class="menu-layout-preview-links"></div>
+                    </div>
+                    <p class="field-description">语言、翻译服务、翻译模式和右上角设置始终保留。保存后同步更新已打开的弹窗。</p>
+                  </aside>
+                </div>
+                <p id="popupMenuStatus" class="field-description" role="status" aria-live="polite"></p>
+              </div>
             </div>
           </section>
 
