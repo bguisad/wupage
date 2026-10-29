@@ -9,6 +9,10 @@ import type { TranslationDisplayMode } from "../shared/types";
 import { readImageTextLayout } from "./image-text-layout";
 import { normalizeProtectedText } from "../shared/protected-text";
 import { isDivProseBlock, READABLE_ROOT_SELECTOR } from "./readable-content";
+import {
+  clearLegacyScientificParagraphs, isLegacyScientificEquation, isLegacyScientificProseBlock,
+  isScientificCitation, isScientificMathImage, legacyScientificProseBlock, prepareLegacyScientificParagraphs
+} from "./legacy-scientific";
 
 export interface TextSegment {
   id: string;
@@ -583,6 +587,7 @@ function collectTextSegmentsFromRoot(
   translateCodeComments: boolean
 ): TextSegment[] {
   if (resetTracking) clearNodeTracking();
+  prepareLegacyScientificParagraphs(root);
   splitAuthoredLineBreakTextNodes(root, X_POST_TEXT_SELECTOR);
   splitAuthoredLineBreakTextNodes(root, YOUTUBE_DESCRIPTION_SELECTOR, true);
   const alreadyTracked = new Set(trackedNodes.map((tracked) => tracked.node));
@@ -862,6 +867,7 @@ export function restoreTranslations(displayMode: TranslationDisplayMode): void {
 
 function clearNodeTracking(): void {
   for (const id of stableReplacementsById.keys()) restoreStableReplacement(id);
+  clearLegacyScientificParagraphs();
   trackedNodes = [];
   trackedGroups = [];
   trackedAttributes = [];
@@ -891,6 +897,8 @@ function collectImageTextSegments(
   const segments: TextSegment[] = [];
   for (const candidate of candidates) {
     if (!(candidate instanceof HTMLImageElement) || trackedImages.has(candidate)) continue;
+    if (isLegacyScientificEquation(candidate)
+      || (candidate.closest(".MATH") && isScientificMathImage(candidate.closest(".MATH")!))) continue;
     if (shouldSkipElement(candidate, true, visibility)
       || !visibility.isElementVisuallyRendered(candidate)) continue;
     const sourceValue = candidate.getAttribute("alt") ?? "";
@@ -1228,6 +1236,7 @@ function groupTextSegments(
     if (
       groupNodes.length < 2 &&
       text === nodeText &&
+      !isLegacyScientificProseBlock(block) &&
       !block.matches(`summary, label, li, ${X_POST_TEXT_SELECTOR}, ${YOUTUBE_COMMENT_SELECTOR}`)
     ) continue;
     if (!text) continue;
@@ -1440,7 +1449,9 @@ function findGroupingBlock(element: Element | null): Element | null {
   if (readableBlock?.matches("summary") && !isInsideReadableSummary(readableBlock)) {
     return null;
   }
-  if (readableBlock) return readableBlock;
+  if (readableBlock) return constrainGroupingToLayoutSlot(element, readableBlock);
+  const scientificBlock = legacyScientificProseBlock(element);
+  if (scientificBlock) return scientificBlock;
 
   // Promotional pages often use a span with authored <br> lines as a whole
   // paragraph. Treating its text runs as inline labels appends each translation
@@ -1453,10 +1464,13 @@ function findGroupingBlock(element: Element | null): Element | null {
   }
 
   const div = element.closest("div");
-  if (div && isDivProseBlock(div)) return div;
+  if (div && isDivProseBlock(div)) return constrainGroupingToLayoutSlot(element, div);
 
   const listItem = element.closest("li");
-  if (!listItem || isStructuredListItem(listItem)) return null;
+  if (!listItem) return null;
+  const slot = constrainGroupingToLayoutSlot(element, listItem);
+  if (slot !== listItem) return slot;
+  if (isStructuredListItem(listItem)) return null;
   const link = element.closest("a");
   // Tags and icon/link rows give the link its own layout box. Moving its
   // translation to the list item leaves an empty badge or fixed-width link
@@ -1468,6 +1482,32 @@ function findGroupingBlock(element: Element | null): Element | null {
     return link;
   }
   return listItem;
+}
+
+function isLayoutContainer(element: Element): boolean {
+  return /^(?:inline-)?(?:flex|grid)$/u.test(window.getComputedStyle(element).display);
+}
+
+// A semantic paragraph/list item may itself arrange several independent cells.
+// Read and render inside the nearest cell instead of aggregating its siblings
+// or introducing another flex/grid item for their combined translation.
+function constrainGroupingToLayoutSlot(element: Element, block: Element): Element | null {
+  let current = element;
+  while (current !== block && current.parentElement) {
+    // Inline-block badges, statistics links and labels are independent boxes
+    // even when their parent is a normal paragraph rather than a flex row.
+    if (window.getComputedStyle(current).display === "inline-block"
+      && !current.matches("code,kbd,samp,.MATH")
+      && !current.querySelector(`${SEMANTIC_TEXT_BLOCK_SELECTOR},div,ul,ol,dl`)) return current;
+    const parent = current.parentElement;
+    if (isLayoutContainer(parent)
+      && !(parent.matches("a") && !parent.querySelector(SEMANTIC_TEXT_BLOCK_SELECTOR))) {
+      return current.querySelector(`${SEMANTIC_TEXT_BLOCK_SELECTOR},div,ul,ol,dl,button,input,select,textarea`)
+        ? null : current;
+    }
+    current = parent;
+  }
+  return block;
 }
 
 function isAuthoredLineTextBlock(element: Element): boolean {
@@ -1490,12 +1530,15 @@ function isAuthoredLineTextBlock(element: Element): boolean {
  * real paragraphs inside the card remain independently translatable.
  */
 function isStructuredListItem(element: Element): boolean {
-  return element.matches("li") && Boolean(element.querySelector(HEADING_SELECTOR));
+  return element.matches("li")
+    && Boolean(element.querySelector(`${HEADING_SELECTOR},p,blockquote,table,ul,ol,dl`));
 }
 
 function isStructuredListMetadata(element: Element): boolean {
   const listItem = element.closest("li");
-  if (!listItem || !isStructuredListItem(listItem)) return false;
+  // Existing heading-based activity cards use the surrounding fields as
+  // metadata. A paragraph-only card can have readable labels of its own.
+  if (!listItem?.querySelector(HEADING_SELECTOR)) return false;
 
   return !element.closest(`p, blockquote, ${HEADING_SELECTOR}`);
 }
@@ -1505,6 +1548,7 @@ function shouldSkipElement(
   includeNavigation = false,
   visibility?: RenderVisibilitySnapshot
 ): boolean {
+  if (isLegacyScientificEquation(element)) return true;
   if (element.closest(`.${TRANSLATION_CLASS},kbd,samp`)) return true;
   if (element.closest(REDDIT_METADATA_SELECTOR)) return true;
   if (isInsideCodeBlock(element)) return false;
@@ -1583,7 +1627,7 @@ function getReadableBlockText(
   visibility: RenderVisibilitySnapshot
 ): { text: string; tokens: ProtectedToken[] } {
   const clone = block.cloneNode(true) as Element;
-  const protectedCandidates = Array.from(clone.querySelectorAll("code,kbd,samp")).map((node) => {
+  const protectedCandidates = Array.from(clone.querySelectorAll("code,kbd,samp,.MATH,a[href]")).map((node) => {
     const element = node as Element;
     const sourcePath = getElementPath(clone, element);
     return {
@@ -1624,6 +1668,9 @@ function getReadableBlockText(
   protectedCandidates.forEach(({ element, sourceElement }) => {
     if (!clone.contains(element)) return;
     if (!sourceElement) return;
+    if (!sourceElement.matches("code,kbd,samp")
+      && !isScientificMathImage(sourceElement) && !isScientificCitation(sourceElement)) return;
+    if (!visibility.isElementVisuallyRendered(sourceElement)) return;
     if (!isProtectedInlineElement(sourceElement)) return;
     const protectedElement = getProtectedRenderElement(sourceElement);
     const marker = `⟪WUPAGE${tokens.length}⟫`;
@@ -1656,7 +1703,10 @@ function removeUnrenderedCloneText(
     });
   }
   for (const pair of pairs) {
-    if (!visibility.isTextNodeVisuallyRendered(pair.source)) pair.clone.remove();
+    // A descendant may belong to its own label, control or paragraph. Its
+    // text must never also appear in an ancestor's translation request.
+    if (!visibility.isTextNodeVisuallyRendered(pair.source)
+      || findGroupingBlock(pair.source.parentElement) !== source) pair.clone.remove();
   }
 }
 
@@ -1685,6 +1735,7 @@ function renderProtectedText(container: Element, id: string, text: string): void
 function isProtectedInlineElement(element: Element): boolean {
   if (element.closest("pre, .highlight, .example-wrap, .blob-code, .react-code-text")) return false;
   if (isCompactControlText(element)) return true;
+  if (legacyScientificProseBlock(element)) return true;
   const div = element.closest("div");
   return Boolean(element.closest(`li,${SEMANTIC_TEXT_BLOCK_SELECTOR}`) || (div && isDivProseBlock(div)));
 }
@@ -1742,6 +1793,10 @@ function insertBlockTranslation(block: Element, translation: Element): void {
     block.append(translation);
     return;
   }
+  if (block.parentElement && isLayoutContainer(block.parentElement)) {
+    block.append(translation);
+    return;
+  }
   block.after(translation);
 }
 
@@ -1767,6 +1822,11 @@ function insertGroupedTranslation(
     insertionBefore.before(translation);
     return;
   }
+  // Legacy title/abstract divs carry their own alignment and typography.
+  if (block.matches("div") && isLegacyScientificProseBlock(block)) {
+    block.append(translation);
+    return;
+  }
   if (displayMode === "replace") {
     block.append(translation);
     return;
@@ -1786,6 +1846,7 @@ function findHeadingAnchor(block: Element): Element | null {
 
 function getRenderMode(element: Element | null): RenderMode {
   if (!element) return "inline";
+  if (isLegacyScientificProseBlock(element)) return "block";
   if (element.matches(X_POST_TEXT_SELECTOR)) return "block";
   if (element.matches(YOUTUBE_COMMENT_SELECTOR)) return "block";
   if (element.matches("label")) return isChoiceLabel(element) ? "inline" : "block";
@@ -1826,6 +1887,7 @@ function isCompactUiElement(element: Element): boolean {
 
 function isLikelyUiToken(text: string, element: Element | null): boolean {
   if (!element) return false;
+  if (legacyScientificProseBlock(element)) return false;
   if (element.closest(YOUTUBE_DESCRIPTION_SELECTOR)) return false;
   if (element.closest(YOUTUBE_COMMENT_SELECTOR)) return false;
   if (isCompactNavigationText(element)) return false;
@@ -1845,7 +1907,9 @@ function isLikelyUiToken(text: string, element: Element | null): boolean {
 
 function isNonTranslatableFragment(text: string): boolean {
   if (!text.trim()) return true;
-  if (!/[\p{L}\p{N}]/u.test(text)) return true;
+  // Standalone counts/dates carry no language. Numbers inside prose are
+  // recovered by completeGroupedSourceNodes and remain in that sentence.
+  if (!/\p{L}/u.test(text)) return true;
   if (/^<?'?[a-zA-Z]>?$/.test(text)) return true;
   if (/^(::|->|=>|for|of)$/i.test(text)) return true;
   if (/^impl(?:<[^>]+>)?$/i.test(text)) return true;

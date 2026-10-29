@@ -7,6 +7,7 @@ import { normalizeShortcutEnabled, normalizeShortcuts } from "./shortcuts";
 import { normalizeServiceConfig, supportsServiceMode } from "./translation-service";
 import { normalizeRequestTemplate, supportsRequestTemplate } from "./request-template";
 import type { ExtensionSettings, ProviderConfig } from "./types";
+import { normalizeFrameTranslation } from "./frame-session";
 
 export async function getSettings(): Promise<ExtensionSettings> {
   const result = await chrome.storage.local.get(SETTINGS_KEY);
@@ -43,6 +44,7 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
     shortcutEnabled: normalizeShortcutEnabled(input.shortcutEnabled, input.shortcuts),
     appearance: normalizeAppearance(input.appearance),
     autoTranslation: normalizeAutoTranslation(input.autoTranslation),
+    frameTranslation: normalizeFrameTranslation(input.frameTranslation),
     selectionTranslation: normalizeSelectionTranslation(input.selectionTranslation),
     targetLang: readString(input.targetLang, DEFAULT_SETTINGS.targetLang),
     sourceLang: readString(input.sourceLang, DEFAULT_SETTINGS.sourceLang),

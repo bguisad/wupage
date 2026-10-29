@@ -6,6 +6,7 @@ import {
 import { getPageTranslationDisplayMode } from "./page-translation";
 import { sendRuntimeRequest } from "./runtime";
 import { buildTranslationContext } from "./translation-context";
+import { documentTranslationRevision } from "./translation-lifecycle";
 
 const pending = new WeakMap<Element, object>();
 
@@ -19,10 +20,11 @@ export async function translateParagraph(target: Element, action: "toggle" | "tr
   }
   if (pending.has(target) || hasTranslationsIn(target)) return;
   const task = {};
+  const revision = documentTranslationRevision();
   pending.set(target, task);
   try {
     const settings = await sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" });
-    if (pending.get(target) !== task || !target.isConnected) return;
+    if (pending.get(target) !== task || revision !== documentTranslationRevision() || !target.isConnected) return;
     const segments = collectParagraphTextSegments(target, settings.translateCodeComments);
     if (!segments.length) throw new Error("此处没有可翻译的段落。");
     renderTranslationPlaceholders(segments);
@@ -31,7 +33,7 @@ export async function translateParagraph(target: Element, action: "toggle" | "tr
       context: buildTranslationContext([target]), sourceLang: settings.sourceLang,
       targetLang: settings.targetLang, providerId: settings.activeProviderId
     });
-    if (pending.get(target) !== task || !target.isConnected) return;
+    if (pending.get(target) !== task || revision !== documentTranslationRevision() || !target.isConnected) return;
     const stale = new Set(invalidateStaleSegments());
     renderTranslations(segments.map((segment, index) => ({ id: segment.id, text: data.translations[index] }))
       .filter(segment => !stale.has(segment.id)), getPageTranslationDisplayMode(settings.translationDisplayMode));

@@ -14,10 +14,6 @@ export function injectContentStyles(): void {
       pointer-events: none;
     }
 
-    .wupage-context-translation .wupage-translation {
-      pointer-events: auto;
-    }
-
     .wupage-translation[data-wupage-mode="block"] {
       display: block;
       margin: 0.18em 0 0.38em;

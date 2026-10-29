@@ -49,7 +49,7 @@ async function togglePage(): Promise<void> {
     if (revision !== pageRevision) return;
     // The popup or floating control may have started translation while settings loaded.
     if (getPageTranslationState().active) return;
-    showShortcutNotice("正在翻译全文，再次按下快捷键可恢复原文。");
+    showShortcutNotice("正在翻译全文，再次操作可恢复原文。");
     const result = await startPageTranslation(settings);
     if (revision !== pageRevision || !getPageTranslationState().active) return;
     if (result.failed) showShortcutNotice(`部分段落翻译失败：${result.error ?? "请检查翻译服务设置。"}`, true);

@@ -305,12 +305,12 @@ describe("popup language controls", () => {
     await vi.waitFor(() => {
       expect(translate.textContent).toBe("显示全文");
       expect(translate.classList.contains("is-loading")).toBe(false);
-      expect(sendToTab).toHaveBeenCalledWith(4, { type: "TRANSLATE_PAGE" });
+      expect(sendToTab).toHaveBeenCalledWith(4, { type: "TRANSLATE_PAGE" }, { frameId: 0 });
     });
     translate.click();
     await vi.waitFor(() => {
       expect(translate.textContent).toBe("翻译全文");
-      expect(sendToTab).toHaveBeenCalledWith(4, { type: "CLEAR_TRANSLATION" });
+      expect(sendToTab).toHaveBeenCalledWith(4, { type: "CLEAR_TRANSLATION" }, { frameId: 0 });
     });
     expect(createTab).not.toHaveBeenCalled();
   });

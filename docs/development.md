@@ -8,6 +8,28 @@
 
 ## 开发
 
+### 嵌入文档翻译
+
+`src/content/frame-bootstrap.ts` 在匹配的所有框架中登记文档，支持来源回退和特殊 URL，按需加载独立的 `frame-content.js`；顶层 `content.js` 保留唯一的悬浮界面。`src/background/frame-sessions.ts` 通过浏览器提供的标签页、框架和文档身份管理会话，保存会话意图到 session storage，并统一处理开关、语言、显示模式、增量接入、取消和标签页内公平调度。`src/shared/frame-session.ts` 保存协议、状态汇总与排除规则。原有服务商调度和缓存继续生效。
+
+`src/content/document-viewport.ts` 使用隐式根相交观察判断框架正文与顶层视口的关系，对实际可见段落的临近内容进行有限预取；不依赖跨域 rootMargin。正文采集和渲染由各文档内的现有引擎执行。迟到结果需要匹配会话和文档；框架导航或整页停止会取消对应请求。
+
+`src/content/frame-visibility.ts` 在相邻框架之间同步祖先隐藏状态，并监听普通 DOM 和可访问 Shadow Root 中的样式变化。页面消息仅携带位置相关提示，不传递翻译命令、正文或配置。服务商返回限流、登录或协议错误时，具有相同服务配置的活动会话统一暂停并取消排队请求；暂停状态随会话意图保存，明确重试或更换服务配置后解除。
+
+构建后运行 `npm run test:frames`（Chrome）、`npm run test:frames:firefox` 或 `npm run test:frames:edge`。测试使用独立资料目录、本地网页和模拟服务，覆盖同域、跨域、嵌套、srcdoc、空白文档、blob、data、sandbox、闭合 Shadow DOM 内的框架、显示模式、语言切换、隐藏后展开、延迟加载、排除规则、取消及超高框架的外层滚动。Chrome 支持 `CHROME_TEST_BROWSER`，Edge 支持 `EDGE_TEST_BROWSER`（省略时使用 Playwright 的 `msedge` 通道），两者支持 `PLAYWRIGHT_MODULE`；Firefox 支持 `FIREFOX_BINARY`。直接运行测试脚本并传入 `--live` 可检查模组详情站点实际渲染，使用 `--edge` 或 `--firefox` 选择浏览器。报告和截图按浏览器分别保存在 `.npm-cache/frame-translation/` 下，并记录实际浏览器标识。
+
+### 卡片与列表的排版边界
+
+正文分组遵守嵌套段落、Flex / Grid 单元和行内块字段的边界。同一文本节点只属于一个分组；包含多个阅读区域的列表项不合并为整段译文。段落处于布局单元中时，译文与加载占位保留在该单元内，避免增加横向布局项。独立数字不单独翻译，句子中的数字随完整句子处理。
+
+构建后运行 `npm run test:profile-layout`、`npm run test:profile-layout:firefox` 和 `npm run test:profile-layout:edge`，使用独立 Chrome、Firefox、Edge 配置和本地模拟服务验证宽窄窗口、三种显示模式、卡片宽度、译文边界、描述去重、数字位置和原文节点恢复。环境变量与框架回归相同；直接运行 `node scripts/test-profile-layout.mjs --live`（可加 `--firefox` 或 `--edge`）还会验证 GitHub 个人页。报告与截图按浏览器分别保存在 `.npm-cache/profile-layout/` 下。原有紧凑控件、动态内容和富文本链接回归也可通过 `npm run test:cards:edge` 在 Edge 中执行，产物保存在 `.npm-cache/card-layout/edge/`。
+
+### 旧式论文页面翻译
+
+`src/content/legacy-scientific.ts` 识别 LaTeX2HTML 生成标记，将页面根节点下连续的行内内容临时组织为段落，并在清理时还原原始节点。正文中的公式图片和数字引用使用已有的受保护标记协议，译文复用公式图片和引用链接；独立公式、编号和公式图片的替代文本不送去翻译。
+
+构建后运行 `npm run test:scientific`（Chrome）、`npm run test:scientific:firefox` 及 `npm run test:scientific:edge`，环境变量与框架回归相同。测试使用本地原创样例和模拟翻译，检查段落、公式、引用、可见范围调度、三种显示模式和恢复原文。直接运行 `node scripts/test-scientific-page.mjs --live`（可加 `--firefox` 或 `--edge`）还会验证 OpenMX 的实际论文页面。报告和截图按浏览器分别保存在 `.npm-cache/scientific-page/` 下；模拟结果只用于验证采集和排版，不衡量翻译质量。
+
 ### 从源码构建
 
 需要 Node.js 22 或更高版本，以及 npm。
@@ -38,13 +60,19 @@ npm run build      # 生成生产构建到 dist/
 
 快捷键保存在扩展设置的 `shortcuts` 中，在设置页直接录入、清空或恢复默认，与其他表单字段一起保存。`src/shared/shortcuts.ts` 统一定义默认值、组合键规范化、事件匹配和已知冲突校验。未配置的新字段补齐默认值，明确清空的值保留为空，非法或重复绑定在读取设置时修复。Chrome / Edge 不提供扩展内改写浏览器快捷键的接口，因此不再声明 Manifest `commands`，避免旧原生绑定与自定义按键同时触发。相关接口范围参见 [Chrome Commands API](https://developer.chrome.com/docs/extensions/reference/api/commands)。
 
-`src/content/keyboard-shortcuts.ts` 在顶层网页捕获按键，根据已加载的配置触发 `src/content/shortcuts.ts` 中共用的翻译动作。使用 `KeyboardEvent.code` 匹配字母和数字物理键；忽略 IME、AltGr、输入和编辑区域、已处理事件与重复执行；仅在匹配时阻止网页默认行为。配置变更通过存储事件同步，初始读取不会覆盖较新的存储变更。快捷键仅作用于普通网页正文，不作用于地址栏、嵌入框架或 PDF 查看器。全文开始前的异步读取可被再次按键取消，过期结果不覆盖恢复原文后的提示，连续切换显示模式按保存顺序处理。
+`src/content/keyboard-shortcuts.ts` 在顶层网页捕获按键，根据已加载的配置触发 `src/content/shortcuts.ts` 中共用的翻译动作。使用 `KeyboardEvent.code` 匹配字母和数字物理键；忽略 IME、AltGr、输入和编辑区域、已处理事件与重复执行；仅在匹配时阻止网页默认行为。配置变更通过存储事件同步，初始读取不会覆盖较新的存储变更。快捷键作用于普通网页及已接入的嵌入框架正文，不作用于地址栏或 PDF 查看器。全文开始前的异步读取可被再次按键取消，过期结果不覆盖恢复原文后的提示，连续切换显示模式按保存顺序处理。
 
 段落翻译快捷键复用 `src/content/paragraph-translation.ts` 的原位翻译与恢复逻辑。`src/content/paragraph-shortcut.ts` 将选区内的文字映射为完整段落并去重，无选区时使用鼠标所在或获得焦点的正文段落；不依赖段落模式、右键翻译或划词翻译开关。配置键沿用 `translate-selection`，保留已有自定义按键与开关。
 
 相关单元回归覆盖录入、取消、清空、默认值、重复及保留组合键校验、设置保存和分类草稿、即时改键与输入保护、快速启停、显示模式顺序和段落翻译。
 
 `npm run test:shortcuts` 在构建后加载真实扩展，使用独立浏览器资料和本地模拟服务验证设置页录入与保存、无需刷新网页的改键和停用、实际键盘事件触发全文与段落翻译、译文模式复用、段落模式、输入保护与窄屏布局。支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER` 和 `PDF_TEST_BROWSER`，报告及截图写入 `.npm-cache/shortcuts/`。浏览器和系统保留快捷键不由网页拦截，跨系统组合仍需在目标环境确认。
+
+### 右键全文翻译
+
+右键全文翻译由 `src/background/page-context-menu.ts` 维护单一顶级菜单，并清理旧版两个段落菜单。正文菜单仅使用 `page` 上下文，与图片菜单分开，避免 Chromium 自动折叠为子菜单。页面翻译状态变化、切换标签页或窗口以及页面导航时重新读取顶层文档状态；异步读取通过序号丢弃过期结果。点击复用全文翻译快捷键的实时切换动作，翻译中也能取消并恢复原文。
+
+构建后运行 `npm run test:context-menu`，使用真实扩展与本地模拟服务验证菜单更新、全文启停、标签页切换、导航和延迟响应取消。支持与快捷键浏览器回归相同的环境变量，报告写入 `.npm-cache/context-menu/`。原生菜单注册与点击路由另由单元测试覆盖。
 
 ### Firefox 构建与验证
 
@@ -124,6 +152,7 @@ npm run test:page
 - 同时检查 `dist/content.js` 能作为普通脚本解析，防止公共工具被拆成模块导入而导致内容脚本无法加载。报告保存在 `.npm-cache/page-translation/report.json`。
 - `npm run test:cards`：使用实际扩展和本地模拟服务，检查中英文界面下的混合语言卡片。覆盖 Flex/Grid 字段分离、标题字号与字重、作者链接、两种窗口宽度、三种显示模式和清除还原；匿名服务将整批判为目标语言时，未翻译项应独立重试。报告保存在 `.npm-cache/card-layout/`。
 - `npm run test:floating`：加载实际扩展，覆盖真实指针的 500 毫秒悬停延迟、离开取消、拖动与位置保存、悬浮球和弹窗的翻译中停止、迟到响应、原译文切换与缓存复用、动态列表、状态同步、缓存清理、失败重试、Debug、设置入口、键盘操作和小窗口。另检查紧凑菜单布局、划词开关与弹窗的双向同步、缺少 OCR 模型时禁用图片翻译，以及说明弹层的边界。报告保存在 `.npm-cache/floating-interactions/`。
+- `npm run test:paragraph-mode`（Chrome）和 `npm run test:paragraph-mode:edge`：在加载扩展前先打开本地网页，验证暂时未连接不会禁用段落模式，提示刷新后可在同一弹窗重试，并检查顶层与嵌入文档的 Ctrl 点击翻译、恢复和退出同步。使用独立配置和本地模拟服务，支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER`、`EDGE_TEST_BROWSER`；报告和截图按浏览器保存到 `.npm-cache/paragraph-mode/`。
 - `npm run test:floating-responsive`：使用实际扩展和触屏仿真，覆盖 iPad Pro 13 的 1032 × 1376 竖屏与横屏。检查长按打开菜单、松手保持、外部轻点关闭、拖动取消长按、轻点翻译，以及首次翻译失败自动打开菜单的服务、语言与显示模式、菜单边界和触屏选择操作；另验证纯触屏隐藏段落模式及说明、鼠标环境保留入口，以及弹窗隐藏后的紧凑布局。报告与截图保存在 `.npm-cache/floating-responsive/`，支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER`。
 - `npm run test:settings`：延迟返回设置，逐帧检查弹窗和设置页重开时的图片翻译开关；保存为开启或关闭的状态都不得闪现错误位置或启动动画。报告保存在 `.npm-cache/settings-initialization/`。
 - 网页回归还包含明暗背景、现代 CSS 颜色和网页强制文字颜色下的实际颜色检查，切换原色、双色和替换模式时不得新增翻译请求。

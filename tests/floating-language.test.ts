@@ -262,7 +262,7 @@ describe("floating language controls", () => {
     button.dispatchEvent(pointerEvent("pointerup", 621, 321));
     button.click();
     expect(menu.hidden).toBe(true);
-    expect(vi.mocked(sendRuntimeRequest).mock.calls.every(([request]) => ["GET_SETTINGS", "GET_OCR_STATUS"].includes(request.type))).toBe(true);
+    expect(vi.mocked(sendRuntimeRequest).mock.calls.every(([request]) => ["GET_SETTINGS", "GET_OCR_STATUS", "PAGE_TRANSLATION_STATE_CHANGED"].includes(request.type))).toBe(true);
     hitbox.dispatchEvent(new Event("pointerenter"));
     await vi.waitFor(() => expect(menu.hidden).toBe(false));
   });

@@ -31,18 +31,20 @@
     },
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["paragraph-frame.js"],
+      "js": ["frame-bootstrap.js"],
       "all_frames": true,
-      "run_at": "document_idle"
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "run_at": "document_start"
     }
   ],
   "options_page": "options.html",
-  "permissions": ["storage", "offscreen", "contextMenus", "activeTab", "declarativeNetRequestWithHostAccess"],
+  "permissions": ["storage", "offscreen", "contextMenus", "activeTab", "webNavigation", "declarativeNetRequestWithHostAccess"],
   "sandbox": { "pages": ["ocr-sandbox.html"] },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
     "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval'; child-src 'self'; connect-src 'self' data: chrome-extension:;"
   },
-  "web_accessible_resources": [{ "resources": ["ocr-runtime/*"], "matches": ["<all_urls>"] }],
+  "web_accessible_resources": [{ "resources": ["ocr-runtime/*", "frame-content.js"], "matches": ["<all_urls>"] }],
   "host_permissions": ["http://*/*", "https://*/*", "file:///*"]
 }

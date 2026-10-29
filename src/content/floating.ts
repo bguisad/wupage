@@ -7,6 +7,7 @@ import type {
   TranslationDebugTask
 } from "../shared/types";
 import { sendRuntimeRequest } from "./runtime";
+import { refreshPageContextState } from "./page-context";
 import { localProviderNotice } from "../shared/local-notice";
 import { enhanceProviderSelect } from "../shared/provider-picker";
 import { addAutoTranslationWebsite, currentWebsitePattern, excludeAutoTranslationWebsite, hasAutoTranslationWebsite, normalizeAutoTranslation, setAutoTranslationEnabled } from "../shared/auto-translation";
@@ -31,6 +32,7 @@ import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import { translateParagraph } from "./paragraph-translation";
 import { normalizeShortcutEnabled } from "../shared/shortcuts";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
+import { isLikelyPdfUrl } from "../pdf/launch";
 
 const FLOATING_ID = "wupage-floating-ball";
 const FLOATING_HITBOX_ID = "wupage-floating-hitbox";
@@ -402,7 +404,7 @@ function createMenu(): void {
       </select>
     </label>
     <div class="wupage-feature-buttons" role="group" aria-label="翻译功能">
-      <button type="button" data-action="context-menu-translation" class="wupage-feature-button" aria-pressed="false" title="右键点击正文段落，通过菜单翻译或恢复原文">
+      <button type="button" data-action="context-menu-translation" class="wupage-feature-button" aria-pressed="false" title="右键点击网页，通过菜单翻译全文或恢复原文">
         <span>右键翻译</span>
         <span class="wupage-feature-indicator" aria-hidden="true"></span>
       </button>
@@ -899,6 +901,7 @@ export function refreshTranslationState(): void {
   const busy = pageActionPending || state.pending > 0;
   const translated = hasPageTranslations();
   const translationEnabled = state.active || translated;
+  refreshPageContextState(translationEnabled);
   // Incremental batches change progress, but the action remains restoring the original.
   const actionLabel = busy || translationEnabled ? "显示原文" : "翻译全文";
   const ball = document.getElementById(FLOATING_ID);
@@ -1135,6 +1138,27 @@ async function refreshDebugPanel(panel: HTMLElement): Promise<void> {
     } satisfies RuntimeRequest);
     summary.textContent = `执行中 ${snapshot.activeCount} · 排队 ${snapshot.queuedCount} · 最近 ${snapshot.tasks.length}`;
     list.replaceChildren(...snapshot.tasks.slice(0, 30).map(renderDebugTask));
+    if (snapshot.frames?.length) {
+      const frames = document.createElement("details");
+      frames.className = "wupage-debug-task";
+      const title = document.createElement("summary");
+      title.textContent = `页面文档 ${snapshot.frames.length}`;
+      frames.append(title);
+      const labels = { ready: "就绪", loading: "接入中", translating: "翻译中", "waiting-viewport": "等待滚动或显示",
+        empty: "没有可翻译正文", excluded: "已排除", unavailable: "无法访问", failed: "翻译失败" };
+      for (const frame of snapshot.frames) {
+        const row = document.createElement("p");
+        row.textContent = `${frame.frameId === 0 ? "主页面" : "嵌入页面"} · ${labels[frame.status]} · ${frame.url.slice(0, 240)}${frame.reason ? ` · ${frame.reason}` : ""}`;
+        if (frame.frameId !== 0 && /^https?:/u.test(frame.url) && isLikelyPdfUrl(frame.url)) {
+          const open = document.createElement("button");
+          open.type = "button"; open.textContent = "翻译此 PDF";
+          open.addEventListener("click", () => { void sendRuntimeRequest({ type: "OPEN_EMBEDDED_PDF", url: frame.url }).catch(() => {}); });
+          row.append(" ", open);
+        }
+        frames.append(row);
+      }
+      list.prepend(frames);
+    }
     if (!snapshot.tasks.length) {
       const empty = document.createElement("div");
       empty.className = "wupage-debug-empty";
@@ -1264,10 +1288,13 @@ export async function setFloatingBallEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-export async function setParagraphMode(enabled: boolean): Promise<void> {
+export async function setParagraphMode(enabled: boolean, broadcast = true): Promise<void> {
   paragraphMode = enabled;
   document.documentElement.classList.toggle("wupage-paragraph-mode", paragraphMode);
   setActiveParagraph(null);
+  if (broadcast && chrome.runtime?.id) {
+    void sendRuntimeRequest({ type: "FRAME_SESSION_PARAGRAPH", enabled }).catch(() => {});
+  }
   const menu = document.getElementById("wupage-floating-menu");
   if (menu) await updateMenuState(menu);
 }

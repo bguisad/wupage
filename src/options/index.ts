@@ -1,4 +1,5 @@
 import { BUILT_IN_PROVIDER_IDS, DEFAULT_SETTINGS } from "../shared/defaults";
+import { normalizeFrameTranslation } from "../shared/frame-session";
 import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from "../shared/languages";
 import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import { sendRuntimeMessage } from "../shared/messaging";
@@ -71,6 +72,8 @@ const autoTranslationControls = setupAutoTranslationControls(
     field.scrollIntoView?.({ block: "center" });
   }
 );
+const frameTranslationEnabled = query<HTMLInputElement>("#frameTranslationEnabled");
+const frameTranslationExcluded = query<HTMLTextAreaElement>("#frameTranslationExcluded");
 
 const LLM_MODEL_OPTIONS = [
   "gpt-4o-mini",
@@ -121,8 +124,8 @@ async function init(): Promise<void> {
     settingsNavigation.reveal(imageTranslationEnabled);
     imageTranslationEnabled.closest(".image-feature")?.scrollIntoView?.({ block: "center" });
   }
-  if (new URLSearchParams(location.search).get("paragraphTranslationNotice") === "refresh") {
-    setStatus("无法连接段落所在页面。请刷新刚才的网页，再右键点击正文段落翻译。");
+  if (new URLSearchParams(location.search).get("pageTranslationNotice") === "refresh") {
+    setStatus("无法连接网页。请刷新刚才的网页，再右键选择全文翻译。");
   }
 
   providerTrigger.addEventListener("click", () => setProviderMenuOpen(providerMenu.hidden));
@@ -183,6 +186,9 @@ function render(): void {
   shortcutControls.render(settings.shortcuts, settings.shortcutEnabled);
   appearanceControls.render(settings.appearance);
   autoTranslationControls.render(settings.autoTranslation);
+  const frameTranslation = normalizeFrameTranslation(settings.frameTranslation);
+  frameTranslationEnabled.checked = frameTranslation.enabled;
+  frameTranslationExcluded.value = frameTranslation.excludeMatches.join("\n");
   renderLanguageOptions(targetLang, settings.targetLang, TARGET_LANGUAGES);
   renderLanguageOptions(sourceLang, settings.sourceLang, SOURCE_LANGUAGES);
   chunkSize.value = String(settings.chunkSize);
@@ -912,6 +918,8 @@ function readSettingsFromForm(): ExtensionSettings {
     shortcuts: shortcutControls.read(),
     shortcutEnabled: shortcutControls.readEnabled(),
     autoTranslation: autoTranslationControls.read(),
+    frameTranslation: normalizeFrameTranslation({ enabled: frameTranslationEnabled.checked,
+      excludeMatches: frameTranslationExcluded.value.split(/\r?\n/u) }),
     targetLang: targetLang.value.trim() || "zh-CN",
     sourceLang: sourceLang.value.trim() || "auto",
     activeProviderId: settings.activeProviderId,

@@ -26,7 +26,8 @@ const MAX_LLM_BATCH_ITEMS = 16;
 
 export async function translateWithSettings(
   settings: ExtensionSettings,
-  request: TranslateBatchRequest
+  request: TranslateBatchRequest,
+  signal?: AbortSignal
 ): Promise<TranslateBatchResponse> {
   const providerId = request.providerId ?? settings.activeProviderId;
   const providerConfig = settings.providers.find((provider) => provider.id === providerId);
@@ -34,17 +35,18 @@ export async function translateWithSettings(
   if (providerConfig.enabled === false) throw new Error(`Provider is disabled: ${providerId}`);
 
   if (providerConfig.type === "doubao-web") {
-    return withDoubaoDeadline(async (signal) => {
+    return withDoubaoDeadline(async (deadlineSignal) => {
+      const requestSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
       let sourceLang = request.sourceLang ?? "auto";
       if (sourceLang === "auto" && request.texts.length) {
-        const detected = await detectSourceLanguage(request.texts, signal);
+        const detected = await detectSourceLanguage(request.texts, requestSignal);
         if (!detected) throw new Error("无法可靠识别源语言，请在翻译设置中手动选择源语言。");
         sourceLang = detected;
       }
-      return translateConfigured(settings, { ...request, sourceLang, context: undefined }, providerConfig, signal);
+      return translateConfigured(settings, { ...request, sourceLang, context: undefined }, providerConfig, requestSignal);
     });
   }
-  return translateConfigured(settings, request, providerConfig);
+  return translateConfigured(settings, request, providerConfig, signal);
 }
 
 async function translateConfigured(
@@ -157,7 +159,7 @@ async function runProviderTask(
   let release: (() => void) | undefined;
   try {
     release = await acquireTaskSlots(
-      providerConfig.id, performance.concurrency, globalConcurrency, debugTask, signal
+      providerConfig.id, performance.concurrency, globalConcurrency, debugTask, signal, request.pageSession ? 0 : 1
     );
     signal?.throwIfAborted();
     debugTask.status = "running";
@@ -214,7 +216,8 @@ async function acquireProviderSlot(
   key: string,
   maxConcurrency: number,
   debugTask: TranslationDebugTask,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priority = 0
 ): Promise<() => void> {
   signal?.throwIfAborted();
   const limiter = getProviderLimiter(key);
@@ -227,7 +230,7 @@ async function acquireProviderSlot(
   debugTask.status = "queued";
   return new Promise((resolve, reject) => {
     const abort = () => {
-      const index = limiter.queue.indexOf(enter);
+      const index = limiter.queue.indexOf(entry);
       if (index !== -1) limiter.queue.splice(index, 1);
       reject(signal!.reason);
     };
@@ -236,8 +239,9 @@ async function acquireProviderSlot(
       limiter.active += 1;
       resolve(() => releaseProviderSlot(limiter));
     };
+    const entry = { enter, priority };
     signal?.addEventListener("abort", abort, { once: true });
-    limiter.queue.push(enter);
+    limiter.queue.push(entry);
   });
 }
 
@@ -246,20 +250,23 @@ async function acquireTaskSlots(
   providerConcurrency: number,
   globalConcurrency: number,
   debugTask: TranslationDebugTask,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priority = 0
 ): Promise<() => void> {
   const releaseProvider = await acquireProviderSlot(
     providerId,
     Math.max(1, providerConcurrency),
     debugTask,
-    signal
+    signal,
+    priority
   );
   try {
     const releaseGlobal = await acquireProviderSlot(
       "__wupage_global__",
       Math.max(1, globalConcurrency),
       debugTask,
-      signal
+      signal,
+      priority
     );
     return () => {
       releaseGlobal();
@@ -286,16 +293,18 @@ function getProviderLimiter(key: string): ProviderLimiter {
 function releaseProviderSlot(limiter: ProviderLimiter): void {
   limiter.active = Math.max(0, limiter.active - 1);
   while (limiter.active < limiter.maxConcurrency && limiter.queue.length) {
-    const next = limiter.queue.shift();
+    const priority = limiter.queue.reduce((highest, entry) => Math.max(highest, entry.priority), 0);
+    const index = limiter.queue.findIndex(entry => entry.priority === priority);
+    const [next] = limiter.queue.splice(index, 1);
     if (!next) return;
-    next();
+    next.enter();
   }
 }
 
 interface ProviderLimiter {
   active: number;
   maxConcurrency: number;
-  queue: Array<() => void>;
+  queue: Array<{ enter: () => void; priority: number }>;
 }
 
 export function groupTexts(
@@ -399,7 +408,7 @@ async function translateProviderTexts(
     if (!request.sourceLang || request.sourceLang === "auto") {
       const unchanged = texts.flatMap((text, index) => translations[index].trim() === text.trim() ? [index] : []);
       if (unchanged.length) {
-        const retried = await provider.translateBatch({ ...request, texts: unchanged.map(index => texts[index]) });
+        const retried = await translate({ ...request, texts: unchanged.map(index => texts[index]) });
         assertTranslationResponse(retried, unchanged.length);
         unchanged.forEach((index, position) => { translations[index] = retried[position]; });
       }

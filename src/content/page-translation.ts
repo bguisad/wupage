@@ -16,6 +16,8 @@ import { sendRuntimeRequest } from "./runtime";
 import { buildTranslationContext } from "./translation-context";
 import { getEffectiveProviderPerformance, isLlmProvider } from "../shared/performance";
 import { ProviderError } from "../shared/errors";
+import { DocumentViewport } from "./document-viewport";
+import { invalidatePendingDocumentTranslations } from "./translation-lifecycle";
 
 const VIEWPORT_MARGIN_RATIO = 0.75;
 const MIN_VIEWPORT_MARGIN = 240;
@@ -60,6 +62,8 @@ interface TranslationSession {
   initialResolved: boolean;
   resolveInitial: (result: PageTranslationResult) => void;
   observer: MutationObserver;
+  viewport: DocumentViewport;
+  initializing: boolean;
   dynamicRoots: Set<Element>;
   changedRoots: Set<Element>;
   dynamicTimer?: number;
@@ -89,7 +93,23 @@ let settingsRevision = 0;
 let latestSettings: ExtensionSettings | undefined;
 const stateListeners = new Set<(event?: "stopped") => void>();
 
+export interface PageTranslationCoordinator {
+  state(): PageTranslationState;
+  start(settings: ExtensionSettings, reuseResults: boolean): Promise<PageTranslationResult>;
+  stop(): void;
+  display(mode: TranslationDisplayMode): void;
+}
+let coordinator: PageTranslationCoordinator | undefined;
+let pageRequestIdentity: { id: string; documentKey: string } | undefined;
+export function configurePageTranslationCoordinator(value: PageTranslationCoordinator): void { coordinator = value; }
+export function setPageRequestIdentity(value: typeof pageRequestIdentity): void { pageRequestIdentity = value; }
+export function notifyCoordinatedPageState(): void { notifyTranslationState(); }
+
 export function getPageTranslationState(): PageTranslationState {
+  return coordinator?.state() ?? getLocalPageTranslationState();
+}
+
+export function getLocalPageTranslationState(): PageTranslationState {
   const session = activeSession;
   return session
     ? {
@@ -120,6 +140,7 @@ export async function loadPageTranslationSettings(): Promise<ExtensionSettings> 
 export function updatePageTranslationSettings(settings: ExtensionSettings): void {
   settingsRevision += 1;
   latestSettings = settings;
+  if (coordinator) return;
   const session = activeSession;
   if (session && (session.settings.sourceLang !== settings.sourceLang || session.settings.targetLang !== settings.targetLang)) {
     // Start from the saved originals, cancelling the old generation before any
@@ -135,6 +156,10 @@ export function updatePageTranslationSettings(settings: ExtensionSettings): void
 }
 
 export function startPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
+  return coordinator ? coordinator.start(settings, reuseResults) : startLocalPageTranslation(settings, reuseResults);
+}
+
+export function startLocalPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
   const saved = suspendedSession;
   const canRestore = reuseResults && saved && saved.pageUrl === location.href
     && saved.translationIdentity === getTranslationIdentity(settings);
@@ -181,6 +206,8 @@ export function startPageTranslation(settings: ExtensionSettings, reuseResults =
     initialResolved: false,
     resolveInitial,
     observer,
+    viewport: new DocumentViewport(() => { if (isActive(session) && !session.initializing) scheduleNearbySegments(session); }),
+    initializing: true,
     dynamicRoots: new Set(),
     changedRoots: new Set()
   };
@@ -189,13 +216,23 @@ export function startPageTranslation(settings: ExtensionSettings, reuseResults =
   observePage(session);
   window.addEventListener("scroll", handleViewportChange, { passive: true, capture: true });
   window.addEventListener("resize", handleViewportChange, { passive: true });
+  document.addEventListener("wupage:frame-visibility", handleViewportChange);
   document.addEventListener("load", handleImageLoad, true);
-  scheduleNearbySegments(session, true);
-  resolveInitialIfReady(session);
+  const begin = () => {
+    if (!isActive(session)) return;
+    session.initializing = false;
+    scheduleNearbySegments(session, true);
+    resolveInitialIfReady(session);
+  };
+  if (session.viewport.deferred) {
+    session.viewport.update([...session.entries.values()].map(entry => entry.segment.element));
+    void session.viewport.ready.then(begin);
+  } else begin();
   return initialPromise;
 }
 
 export function clearPageTranslation(): void {
+  invalidatePendingDocumentTranslations();
   cancelActiveSession();
   suspendedSession?.observer.disconnect();
   suspendedSession = null;
@@ -204,6 +241,12 @@ export function clearPageTranslation(): void {
 }
 
 export function hidePageTranslation(): void {
+  if (coordinator) { coordinator.stop(); return; }
+  hideLocalPageTranslation();
+}
+
+export function hideLocalPageTranslation(): void {
+  invalidatePendingDocumentTranslations();
   const session = activeSession;
   if (!session && suspendedSession) {
     // Paragraph translation can add visible results while the page session is
@@ -245,6 +288,11 @@ export function getPageTranslationDisplayMode(fallback: TranslationDisplayMode):
 }
 
 export function setPageTranslationDisplayMode(mode: TranslationDisplayMode): void {
+  if (coordinator) { coordinator.display(mode); return; }
+  setLocalPageTranslationDisplayMode(mode);
+}
+
+export function setLocalPageTranslationDisplayMode(mode: TranslationDisplayMode): void {
   currentDisplayMode = mode;
   const session = activeSession;
   if (!session && suspendedSession) return;
@@ -255,10 +303,13 @@ export function setPageTranslationDisplayMode(mode: TranslationDisplayMode): voi
 
 function scheduleNearbySegments(session: TranslationSession, initial = false): void {
   if (!isActive(session) || session.providerPaused) return;
-
+  if (session.initializing && !initial) return;
+  const elements = [...session.entries.values()].map(entry => entry.segment.element);
+  session.viewport.update(elements);
   const nearby = [...session.entries.values()]
     .filter((entry) => entry.status === "idle" || entry.status === "queued")
-    .map((entry) => ({ entry, priority: getViewportPriority(entry.segment.element) }))
+    .map((entry) => ({ entry, priority: session.viewport.priority(entry.segment.element) ??
+      (window === window.top || typeof IntersectionObserver === "undefined" ? getViewportPriority(entry.segment.element) : null) }))
     .filter((candidate): candidate is { entry: SegmentEntry; priority: number } => candidate.priority !== null)
     .sort((left, right) => left.priority - right.priority);
   const nearbyIds = new Set(nearby.map(({ entry }) => entry.segment.id));
@@ -314,7 +365,8 @@ async function runBatch(session: TranslationSession, segments: TextSegment[]): P
       context: buildTranslationContext(segments.map((segment) => segment.element)),
       sourceLang: session.settings.sourceLang,
       targetLang: session.settings.targetLang,
-      providerId: session.settings.activeProviderId
+      providerId: session.settings.activeProviderId,
+      ...(pageRequestIdentity ? { pageSession: pageRequestIdentity } : {})
     } satisfies RuntimeRequest);
     if (!isActive(session)) return;
     // A response can arrive after a virtualized row has been reused.
@@ -554,9 +606,11 @@ function cancelActiveSession(): void {
   }
   window.removeEventListener("scroll", handleViewportChange, true);
   window.removeEventListener("resize", handleViewportChange);
+  document.removeEventListener("wupage:frame-visibility", handleViewportChange);
   document.removeEventListener("load", handleImageLoad, true);
   if (!session) return;
   session.observer.disconnect();
+  session.viewport.disconnect();
   session.dynamicRoots.clear();
   session.changedRoots.clear();
   if (session.dynamicTimer !== undefined) {

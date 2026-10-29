@@ -3,6 +3,7 @@ import { SETTINGS_KEY } from "../shared/defaults";
 import type { ExtensionSettings } from "../shared/types";
 import { hasPageTranslations } from "./dom";
 import { getPageTranslationState, hidePageTranslation, loadPageTranslationSettings, startPageTranslation, subscribePageTranslationState } from "./page-translation";
+import { sendRuntimeRequest } from "./runtime";
 
 interface AutoTranslationDependencies {
   loadSettings: () => Promise<ExtensionSettings>;
@@ -47,6 +48,7 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
       handled = true; owned = false; generation++;
     } else if (active) handled = true;
     previouslyActive = active;
+    if (!active && !handled) schedule();
   });
 
   function stopOwned(): void {
@@ -82,20 +84,29 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
       if (!config.enabled || isAutoTranslationWebsiteExcluded(config, location.href)) return;
       const siteMatch = matchesAutoTranslationSite(config, location.href);
       if (!siteMatch && !config.nonTargetLanguage) return;
-      const sample = pageText();
-      if (!sample.trim()) return;
+      const samples = [pageText()];
+      if (!overrides.start && chrome.runtime?.id && typeof chrome.runtime.onMessage?.addListener === "function") {
+        const frames = await sendRuntimeRequest<unknown>({ type: "FRAME_SESSION_SAMPLES" }).catch(() => []);
+        if (Array.isArray(frames)) samples.push(...frames.filter((sample): sample is string => typeof sample === "string"));
+      }
+      if (!samples.some(sample => sample.trim())) return;
       if (!siteMatch) {
-        if (sample.length < 40) return;
-        const signature = `${document.documentElement.lang}\n${current.targetLang}\n${sample}`;
+        const candidates = samples.filter(sample => sample.length >= 40);
+        if (!candidates.length) return;
+        const signature = `${document.documentElement.lang}\n${current.targetLang}\n${candidates.join("\n")}`;
         if (signature === lastSample) return;
-        let language = "";
-        if (deps.detectLanguage) {
-          const result = await deps.detectLanguage(sample);
-          const best = result.languages[0];
-          if (best && best.percentage >= 70 && best.language !== "und") language = languageFamily(best.language);
-        } else language = languageFamily(document.documentElement.lang);
-        if (disposed || version !== generation) return;
-        if (!language || language === "und" || language === languageFamily(current.targetLang)) {
+        let foreign = false;
+        for (const sample of candidates) {
+          let language = "";
+          if (deps.detectLanguage) {
+            const result = await deps.detectLanguage(sample);
+            const best = result.languages[0];
+            if (best && best.percentage >= 70 && best.language !== "und") language = languageFamily(best.language);
+          } else language = languageFamily(document.documentElement.lang);
+          if (disposed || version !== generation) return;
+          if (language && language !== "und" && language !== languageFamily(current.targetLang)) { foreign = true; break; }
+        }
+        if (!foreign) {
           lastSample = signature; return;
         }
       }
@@ -169,7 +180,7 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
 
 function routeKey(): string {
   const url = new URL(location.href);
-  return url.origin + url.pathname + url.search;
+  return url.origin + url.pathname + url.search + url.hash;
 }
 
 function pageText(): string {

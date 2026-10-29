@@ -106,6 +106,26 @@ describe("contextual machine translation", () => {
 });
 
 describe("LLM provider queue", () => {
+  it("serves an explicit request before queued page prefetch without interrupting running work", async () => {
+    const order: string[] = [];
+    let finish!: () => void;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const { texts } = JSON.parse(body.messages[1].content) as { texts: string[] };
+      order.push(texts[0]);
+      if (texts[0] === "running") await new Promise<void>(resolve => { finish = resolve; });
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(texts.map(text => `译文 ${text}`)) } }] }) };
+    }));
+    const settings = createLlmSettings("priority-test", 1);
+    const pageSession = { id: "page", documentKey: "document" };
+    const first = translateWithSettings(settings, { texts: ["running"], targetLang: "zh-CN", pageSession });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const prefetch = translateWithSettings(settings, { texts: ["prefetch"], targetLang: "zh-CN", pageSession });
+    const explicit = translateWithSettings(settings, { texts: ["explicit"], targetLang: "zh-CN" });
+    await vi.waitFor(() => expect(getTranslationDebugSnapshot().tasks.filter(task => task.providerId === "priority-test" && task.status === "queued")).toHaveLength(2));
+    finish(); await Promise.all([first, prefetch, explicit]);
+    expect(order).toEqual(["running", "explicit", "prefetch"]);
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();

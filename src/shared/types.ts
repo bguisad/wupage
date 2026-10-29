@@ -180,6 +180,7 @@ export type DualServiceProviderConfig = Extract<ProviderConfig, DualServiceConfi
 }>;
 
 export interface ExtensionSettings {
+  frameTranslation?: import("./frame-session").FrameTranslationSettings;
   shortcuts?: ShortcutSettings;
   shortcutEnabled?: ShortcutEnabledSettings;
   appearance?: AppearanceSettings;
@@ -217,6 +218,7 @@ export interface AutoTranslationSettings {
 }
 
 export interface TranslateBatchRequest {
+  pageSession?: { id: string; documentKey: string };
   texts: string[];
   /** Verify protected PDF formula markers before caching a translation. */
   preservePlaceholders?: boolean;
@@ -281,6 +283,7 @@ export interface TranslationDebugTask {
 }
 
 export interface TranslationDebugSnapshot {
+  frames?: import("./frame-session").FrameDiagnostic[];
   tasks: TranslationDebugTask[];
   activeCount: number;
   queuedCount: number;
@@ -299,6 +302,7 @@ export interface TranslatorProvider {
 }
 
 export type RuntimeRequest =
+  | import("./frame-session").FrameSessionRequest
   | { type: "EXECUTE_TRANSLATION_SHORTCUT"; command: TranslationShortcut }
   | { type: "LOOKUP_DICTIONARY"; query: string; provider: DictionaryProvider }
   | { type: "PLAY_DICTIONARY_AUDIO"; provider: DictionaryProvider; url: string }
@@ -315,6 +319,7 @@ export type RuntimeRequest =
   | { type: "TRANSLATE_PAGE" }
   | { type: "CLEAR_TRANSLATION" }
   | { type: "GET_TRANSLATION_STATE" }
+  | { type: "PAGE_TRANSLATION_STATE_CHANGED" }
   | { type: "GET_PARAGRAPH_MODE" }
   | { type: "SET_PARAGRAPH_MODE"; enabled: boolean }
   | { type: "GET_FLOATING_BALL" }
@@ -324,11 +329,11 @@ export type RuntimeRequest =
   | { type: "CLEAR_CACHE" }
   | { type: "LOAD_IMAGE"; url: string }
   | { type: "TRANSLATE_CONTEXT_IMAGE"; srcUrl: string }
-  | { type: "TRANSLATE_CONTEXT_PARAGRAPH"; action: "translate" | "restore" }
   | ({ type: "TRANSLATE_IMAGE" } & TranslateImageRequest)
   | ({ type: "TRANSLATE_BATCH" } & TranslateBatchRequest)
   | { type: "GET_SETTINGS" }
   | { type: "OPEN_OPTIONS_PAGE" }
+  | { type: "OPEN_EMBEDDED_PDF"; url: string }
   | { type: "SAVE_SETTINGS"; settings: ExtensionSettings }
   | { type: "TEST_PROVIDER"; providerId?: string };
 

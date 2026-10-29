@@ -427,10 +427,14 @@ async function loadParagraphMode(): Promise<void> {
       type: "GET_PARAGRAPH_MODE"
     });
     paragraphMode = result.enabled;
+    translationModeSelect.removeAttribute("title");
     updateParagraphModeButton();
-  } catch {
-    paragraphModeAvailable = false;
-    translationModeSelect.title = "段落模式需要在普通网页刷新后使用。";
+  } catch (error) {
+    // A missing/old content script is a connection state, not a capability
+    // verdict. Keep the option selectable so a later attempt can reconnect.
+    paragraphModeError = error instanceof Error ? error.message : String(error);
+    translationModeSelect.title = paragraphModeError;
+    setStatus(paragraphModeError);
   }
 }
 
@@ -557,6 +561,7 @@ async function toggleParagraphMode(): Promise<void> {
       if (!tab.id) throw new Error("没有活动标签页。");
       const result = await sendTabMessage<{ enabled: boolean }>(tab.id, { type: "SET_PARAGRAPH_MODE", enabled });
       paragraphMode = result.enabled;
+      translationModeSelect.removeAttribute("title");
     }
     if (requested !== "paragraph") await savePopupSettings();
   } catch (error) {

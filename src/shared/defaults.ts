@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   appearance: { ...DEFAULT_APPEARANCE, customSchemes: [] },
   selectionTranslation: { ...DEFAULT_SELECTION_TRANSLATION },
   autoTranslation: { enabled: false, nonTargetLanguage: false, presetSites: [], customSites: [] },
+  frameTranslation: { enabled: true, excludeMatches: [] },
   targetLang: "zh-CN",
   sourceLang: "auto",
   activeProviderId: "microsoft-web-translate",

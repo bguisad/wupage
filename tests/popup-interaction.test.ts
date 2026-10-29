@@ -219,6 +219,41 @@ describe("popup translation interactions", () => {
     expect(document.querySelector("#status")?.textContent).toBe("");
   });
 
+  it("keeps paragraph mode selectable after the initial page connection fails", async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    vi.resetModules();
+    document.open(); document.write(readFileSync(resolve(process.cwd(), "popup.html"), "utf8")); document.close();
+    vi.mocked(chrome.tabs.sendMessage)
+      .mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."))
+      .mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."));
+    await import("../src/popup/index");
+    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.querySelector<HTMLOptionElement>('option[value="paragraph"]')!.disabled).toBe(false);
+    expect(document.querySelector("#status")?.textContent).toContain("刷新网页后重试");
+    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(toggle.value).toBe("paragraph"));
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(paragraph).toHaveBeenLastCalledWith(true);
+    expect(document.querySelector<HTMLSpanElement>("#paragraphModeHint")!.hidden).toBe(false);
+    expect(document.querySelector("#status")?.textContent).toBe("");
+    expect(toggle.hasAttribute("title")).toBe(false);
+  });
+
+  it("gives a refresh hint on a disconnected paragraph attempt and permits another attempt", async () => {
+    paragraph.mockRejectedValueOnce(new Error("Could not establish connection. Receiving end does not exist."));
+    const toggle = document.querySelector<HTMLSelectElement>("#translationDisplayMode")!;
+    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.value).toBe("bilingual");
+    expect(toggle.querySelector<HTMLOptionElement>('option[value="paragraph"]')!.disabled).toBe(false);
+    expect(document.querySelector("#status")?.textContent).toContain("刷新网页后重试");
+    toggle.value = "paragraph"; toggle.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.value).toBe("paragraph");
+    expect(document.querySelector("#status")?.textContent).toBe("");
+  });
+
   it("restores the floating ball value when saving fails", async () => {
     save.mockRejectedValueOnce(new Error("设置保存失败"));
     const toggle = document.querySelector<HTMLButtonElement>("#floatingBall")!;

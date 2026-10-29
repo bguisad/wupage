@@ -60,11 +60,13 @@ describe("background startup compatibility", () => {
     const runtime = { onMessage: { addListener }, lastError: undefined as { message: string } | undefined };
     vi.stubGlobal("chrome", {
       runtime,
+      tabs: { query: async () => [] },
       storage: { local: {
         get: vi.fn(async () => stored),
         set: vi.fn(async (value: Record<string, unknown>) => { Object.assign(stored, value); })
       } },
       contextMenus: mode === "missing-menu" ? undefined : {
+        remove: (_id: string, callback: () => void) => callback(),
         update: (_id: string, _properties: unknown, callback?: () => void) => {
           if (mode === "throwing-menu") throw new Error("Menu API unavailable");
           // Chromium before 123 returns undefined and reports errors via callback.

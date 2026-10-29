@@ -12,8 +12,19 @@ export async function sendTabMessage<T = unknown>(
   tabId: number,
   request: RuntimeRequest
 ): Promise<T> {
-  const response = (await chrome.tabs.sendMessage(tabId, request)) as RuntimeResponse | undefined;
-  if (!response) throw new Error("No response from page content script.");
+  let response: RuntimeResponse | undefined;
+  try {
+    response = (await chrome.tabs.sendMessage(tabId, request, { frameId: 0 })) as RuntimeResponse | undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/receiving end does not exist|could not establish connection|message port closed|extension context invalidated/iu.test(message)) {
+      throw new Error(PAGE_CONNECTION_MESSAGE);
+    }
+    throw error;
+  }
+  if (!response) throw new Error(PAGE_CONNECTION_MESSAGE);
   if (!response.ok) throw restoreRuntimeError(response);
   return response.data as T;
 }
+
+const PAGE_CONNECTION_MESSAGE = "尚未连接到当前网页。若刚更新或重新加载扩展，请刷新网页后重试。";

@@ -103,7 +103,16 @@
                 <input id="translateCodeComments" type="checkbox" role="switch" />
                 <span class="setting-toggle-control" aria-hidden="true"></span>
               </label>
+              <label class="setting-toggle">
+                <span>全文翻译包含嵌入内容</span>
+                <input id="frameTranslationEnabled" type="checkbox" role="switch" />
+                <span class="setting-toggle-control" aria-hidden="true"></span>
+              </label>
             </div>
+            <label>嵌入内容排除规则
+              <textarea id="frameTranslationExcluded" rows="3" spellcheck="false" placeholder="https://example.com/widget/*"></textarea>
+              <span class="field-description">每行一个网址规则，* 匹配任意字符。也可写「所在网页规则 =&gt; 嵌入网址规则」，仅排除指定网页中的嵌入内容。</span>
+            </label>
           </section>
 
           <section id="shortcutSettings" class="settings-panel" aria-labelledby="shortcutSettingsTitle" hidden>

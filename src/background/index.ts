@@ -6,7 +6,7 @@ import { clearTranslationCache, getTranslationDebugSnapshot, translateWithSettin
 import { requestOcr } from "./ocr";
 import { installedRevision } from "../ocr/model-store";
 import { initImageContextMenu } from "./image-context-menu";
-import { initParagraphContextMenu } from "./paragraph-context-menu";
+import { initPageContextMenu, refreshPageContextMenu } from "./page-context-menu";
 import { initializeOllamaCompatibility } from "./ollama-compatibility";
 import { requestLocal } from "./local";
 import { lookupDictionary, playDictionaryAudio, stopDictionaryAudio } from "./dictionary";
@@ -14,6 +14,10 @@ import { normalizeSelectionTranslation } from "../shared/dictionary";
 import { checkDoubao, getDoubaoStatus } from "./doubao";
 import { initializeDoubaoCompatibility } from "./doubao-compatibility";
 import { runtimeErrorResponse } from "../shared/errors";
+import { frameSessions } from "./frame-sessions";
+import type { FrameSessionRequest } from "../shared/frame-session";
+
+frameSessions.install();
 
 chrome.runtime.onMessage.addListener((request: RuntimeRequest, sender, sendResponse) => {
   if ("target" in request) return;
@@ -35,13 +39,17 @@ try {
 void initializeOllamaCompatibility().catch((error: unknown) => console.warn("WuPage Ollama compatibility:", error));
 void initializeDoubaoCompatibility().catch((error: unknown) => console.warn("WuPage Doubao compatibility:", error));
 try {
-  initParagraphContextMenu();
+  initPageContextMenu();
 } catch (error: unknown) {
-  console.warn("WuPage paragraph menu:", error);
+  console.warn("WuPage page menu:", error);
 }
 
 async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  if (isFrameRequest(request)) return frameSessions.handle(request, sender);
   switch (request.type) {
+    case "PAGE_TRANSLATION_STATE_CHANGED":
+      await refreshPageContextMenu(sender);
+      return null;
     case "LOOKUP_DICTIONARY":
     case "PLAY_DICTIONARY_AUDIO": {
       const settings = normalizeSelectionTranslation((await getSettings()).selectionTranslation);
@@ -71,6 +79,13 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     case "OPEN_OPTIONS_PAGE":
       await chrome.runtime.openOptionsPage();
       return null;
+    case "OPEN_EMBEDDED_PDF": {
+      const source = new URL(request.url);
+      if (!["http:", "https:"].includes(source.protocol)) throw new Error("此 PDF 地址不支持打开。");
+      const target = new URL(chrome.runtime.getURL("pdf.html"));
+      target.searchParams.set("url", source.href); target.searchParams.set("translate", "1");
+      await chrome.tabs.create({ url: target.href }); return { opened: true };
+    }
     case "GET_SETTINGS": {
       let settings = await getSettings();
       if (settings.imageTranslationEnabled) {
@@ -101,7 +116,7 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     }
     case "TRANSLATE_BATCH": {
       const settings = await getSettings();
-      return translateWithSettings(settings, request);
+      return frameSessions.translate(request, sender, signal => translateWithSettings(settings, request, signal));
     }
     case "LOAD_IMAGE": {
       const settings = await getSettings();
@@ -111,7 +126,8 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     case "TRANSLATE_IMAGE":
       return translateImageWithSettings(await getSettings(), request);
     case "GET_TRANSLATION_DEBUG":
-      return getTranslationDebugSnapshot();
+      return { ...getTranslationDebugSnapshot(),
+        ...(sender.tab?.id !== undefined ? { frames: await frameSessions.diagnostics(sender.tab.id) } : {}) };
     case "CLEAR_CACHE":
       return clearTranslationCache();
     case "TEST_PROVIDER": {
@@ -134,7 +150,6 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     case "TRANSLATE_PAGE":
     case "EXECUTE_TRANSLATION_SHORTCUT":
     case "TRANSLATE_CONTEXT_IMAGE":
-    case "TRANSLATE_CONTEXT_PARAGRAPH":
     case "CLEAR_TRANSLATION":
     case "GET_TRANSLATION_STATE":
     case "GET_PARAGRAPH_MODE":
@@ -150,4 +165,8 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled message: ${JSON.stringify(value)}`);
+}
+
+function isFrameRequest(request: RuntimeRequest): request is FrameSessionRequest {
+  return request.type.startsWith("FRAME_");
 }

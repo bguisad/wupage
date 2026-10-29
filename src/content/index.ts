@@ -5,7 +5,6 @@ import {
   getParagraphMode,
   initFloatingBall,
   openDebugPanel,
-  refreshTranslationState,
   setFloatingBallEnabled,
   setParagraphMode
 } from "./floating";
@@ -23,15 +22,15 @@ import { SETTINGS_KEY } from "../shared/defaults";
 import { initAutoTranslation } from "./auto-translation";
 import { initSelectionTranslation } from "./selection-translation";
 import { setupAppearance } from "../shared/appearance-runtime";
-import { initParagraphContextTranslation } from "./paragraph-context";
 import { executeTranslationShortcut } from "./shortcuts";
 import { initKeyboardShortcuts } from "./keyboard-shortcuts";
-
-const translateContextParagraph = initParagraphContextTranslation(refreshTranslationState);
+import { installFrameRuntime } from "./frame-runtime";
+import { createDocumentKey } from "../shared/frame-session";
 
 let pageActionVersion = 0;
 
 addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
+  if (request.type.startsWith("FRAME_")) return;
   handleMessage(request)
     .then((data): RuntimeResponse => ({ ok: true, data }))
     .catch((error: unknown): RuntimeResponse => ({
@@ -44,6 +43,8 @@ addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
 });
 
 injectContentStyles();
+if (chrome.runtime?.id && typeof chrome.runtime.onMessage?.addListener === "function") installFrameRuntime(createDocumentKey(), { top: true,
+  paragraph: enabled => setParagraphMode(enabled, false) });
 const appearance = setupAppearance(undefined, { extensionPage: false, onChange: scheme => {
   refreshTranslationColors({ light: scheme.colors["translation-light"], dark: scheme.colors["translation-dark"] });
 } });
@@ -73,7 +74,6 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
     await executeTranslationShortcut(request.command);
     return { handled: true };
   }
-  if (request.type === "TRANSLATE_CONTEXT_PARAGRAPH") return translateContextParagraph(request.action);
   if (request.type === "TRANSLATE_CONTEXT_IMAGE") {
     return translateContextImage(request.srcUrl);
   }

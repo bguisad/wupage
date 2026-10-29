@@ -4,9 +4,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { browserTarget, verifyBrowserIdentity } from "./lib/browser-target.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const output = path.join(root, ".npm-cache/card-layout");
+const target = browserTarget();
+const output = path.join(root, ".npm-cache/card-layout", ...(target.kind === "edge" ? ["edge"] : []));
 await fs.mkdir(output, { recursive: true });
 const moduleName = process.env.PLAYWRIGHT_MODULE || "playwright";
 const { chromium } = await import(path.isAbsolute(moduleName) ? pathToFileURL(moduleName).href : moduleName);
@@ -89,10 +91,16 @@ await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 let context;
 try {
   context = await chromium.launchPersistentContext(path.join(output, `profile-${Date.now()}`), {
-    ...(process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : { channel: "chromium" }),
+    ...(target.kind === "edge" || process.env.CHROME_TEST_BROWSER ? target.chromiumOptions
+      : process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : target.chromiumOptions),
     headless: true, ignoreDefaultArgs: ["--disable-extensions"],
-    args: [`--load-extension=${path.join(root, "dist")}`], viewport: { width: 1000, height: 900 }
+    args: target.kind === "edge" || process.env.CHROME_TEST_BROWSER ? ["--enable-unsafe-extension-debugging"] : [`--load-extension=${path.join(root, "dist")}`],
+    viewport: { width: 1000, height: 900 }
   });
+  if (target.kind === "edge" || process.env.CHROME_TEST_BROWSER) {
+    const session = await context.browser().newBrowserCDPSession();
+    await session.send("Extensions.loadUnpacked", { path: path.join(root, "dist") }); await session.detach();
+  }
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker", { timeout: 15000 });
   const control = await context.newPage();
   await control.goto(`chrome-extension://${new URL(worker.url()).host}/options.html`);
@@ -122,6 +130,7 @@ try {
     };
   }, translations);
   const page = await context.newPage();
+  const identity = verifyBrowserIdentity(target, await page.evaluate(() => navigator.userAgent));
   const setMode = mode => control.evaluate(async mode => {
     const { data: settings } = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
     await chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: { ...settings, translationDisplayMode: mode } });
@@ -269,7 +278,7 @@ try {
   assert.ok(requests.some(source => source.startsWith("Page title: 模组列表")), "Exercise combined language detection");
   assert.ok(requests.includes(summary), "Retry the untranslated description independently");
   assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, "report.json"), JSON.stringify({ reports, errors }, null, 2));
+  await fs.writeFile(path.join(output, "report.json"), JSON.stringify({ ...identity, reports, errors }, null, 2));
   console.log("PASS: localized card pages; 12 locale/viewport/mode combinations, title and recovered typography, stable dynamic counts, author links, icon/link rows, tag labels, mixed-language recovery and source restoration");
 } finally {
   await context?.close();
