@@ -1,17 +1,25 @@
 import { paintFormulaText } from "./math-rendering";
+import type { PdfTextBlock } from "./model";
+import type { PdfExportScene, PdfExportText } from "./vector-export";
 
 export interface RasterPdfPage {
   width: number;
   height: number;
   imageBytes: Uint8Array;
   format: "jpeg" | "png";
+  scene?: PdfExportScene;
 }
 
 export async function buildRasterPdf(
   pages: RasterPdfPage[],
-  title: string
+  title: string,
+  sourceBytes?: Uint8Array
 ): Promise<Uint8Array> {
   if (!pages.length) throw new Error("没有可导出的 PDF 页面。");
+  if (pages.some((page) => page.scene)) {
+    const { buildSearchablePdf } = await import("./vector-export");
+    return buildSearchablePdf(pages, title, sourceBytes);
+  }
   const { PDFDocument } = await import("pdf-lib");
   const document = await PDFDocument.create();
   document.setTitle(title);
@@ -32,6 +40,68 @@ export async function buildRasterPdf(
   }
 
   return document.save({ useObjectStreams: true });
+}
+
+export async function collectPdfExportScene(original: HTMLCanvasElement, layer: HTMLElement,
+  blocks: PdfTextBlock[], width: number, height: number, transform: number[]): Promise<PdfExportScene> {
+  const scene: PdfExportScene = { text: [], images: [], transform, unchanged: blocks.every((block) => !block.translatable) };
+  const pixelScale = original.width / width;
+  const measure = document.createElement("canvas").getContext("2d");
+  const image = async (canvas: HTMLCanvasElement, x: number, y: number, w: number, h: number): Promise<void> => {
+    if (w <= 0 || h <= 0) return;
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("无法编码 PDF 保留内容。")), "image/png"));
+    scene.images.push({ bytes: new Uint8Array(await blob.arrayBuffer()), x, y, width: w, height: h });
+  };
+  for (const block of blocks.filter((block) => !block.translatable)) for (const line of block.lines) {
+    const left = Math.max(0, Math.floor(line.x * pixelScale));
+    const top = Math.max(0, Math.floor((height - line.baselineY - line.height * 0.9) * pixelScale));
+    const right = Math.min(original.width, Math.ceil((line.x + line.width) * pixelScale));
+    const bottom = Math.min(original.height, Math.ceil((height - line.baselineY + line.height * 0.24) * pixelScale));
+    if (right <= left || bottom <= top) continue;
+    const crop = document.createElement("canvas");
+    crop.width = right - left; crop.height = bottom - top;
+    crop.getContext("2d")?.drawImage(original, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height);
+    await image(crop, left / pixelScale, top / pixelScale, crop.width / pixelScale, crop.height / pixelScale);
+    scene.text.push({ text: line.text.replace(/⟪WUPAGE\d+⟫/gu, (marker) => block.formulas?.find((formula) => formula.placeholder === marker)?.text ?? ""),
+      x: line.x, y: height - line.baselineY, width: line.width, size: line.height, color: [0, 0, 0], invisible: true });
+  }
+  const layerBounds = layer.getBoundingClientRect();
+  const coordinateScale = Number(layer.dataset.coordinateScale) || 1;
+  const cssScale = layerBounds.width / (Number.parseFloat(layer.style.width) || layerBounds.width) || 1;
+  const toPdf = 1 / (cssScale * coordinateScale * pixelScale);
+  for (const block of layer.querySelectorAll<HTMLElement>(".translation-block")) {
+    const element = block.querySelector<HTMLElement>(".translation-block-text");
+    if (!element) continue;
+    if (block.dataset.layoutOverflow) throw new Error("有译文超出可读排版范围，请调整译文块大小或文字后再下载。");
+    const style = getComputedStyle(element), bounds = element.getBoundingClientRect();
+    const fontSize = Number.parseFloat(element.style.fontSize);
+    if (measure) measure.font = `${style.fontWeight} ${fontSize}px ${style.fontFamily}`;
+    const color = (style.color.match(/[\d.]+/gu)?.slice(0, 3).map((channel) => Number(channel) / 255) ?? [0, 0, 0]) as [number, number, number];
+    const point = (rect: DOMRect) => ({ x: (rect.left - layerBounds.left + element.scrollLeft * cssScale) * toPdf,
+      y: (rect.bottom - layerBounds.top + element.scrollTop * cssScale) * toPdf });
+    const read = async (node: Node): Promise<void> => {
+      if (node instanceof HTMLCanvasElement && node.dataset.formulaToken) {
+        const rect = node.getBoundingClientRect(), position = point(rect);
+        await image(node, position.x, position.y - rect.height * toPdf, rect.width * toPdf, rect.height * toPdf);
+        scene.text.push({ text: node.getAttribute("aria-label") ?? "", x: position.x, y: position.y,
+          width: rect.width * toPdf, size: fontSize / coordinateScale / pixelScale, color, invisible: true });
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        const range = document.createRange();
+        let offset = 0;
+        for (const character of node.textContent ?? "") {
+          range.setStart(node, offset); offset += character.length; range.setEnd(node, offset);
+          const rect = range.getBoundingClientRect();
+          if (!rect.width || rect.bottom <= bounds.top || rect.top >= bounds.bottom || rect.right <= bounds.left || rect.left >= bounds.right) continue;
+          const position = point(rect), descent = measure?.measureText(character).fontBoundingBoxDescent || 0;
+          const run: PdfExportText = { text: character, x: position.x, y: position.y - descent / coordinateScale / pixelScale,
+            width: rect.width * toPdf, size: fontSize / coordinateScale / pixelScale, color, bold: Number(style.fontWeight) >= 600 };
+          scene.text.push(run);
+        }
+      } else for (const child of node.childNodes) await read(child);
+    };
+    await read(element);
+  }
+  return scene;
 }
 
 export function composeTranslatedPageCanvas(

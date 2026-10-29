@@ -14,6 +14,7 @@ export interface PdfTextItemLike {
   fontDescent?: number;
   preserveOriginal?: boolean;
   tocPart?: "title" | "leader";
+  role?: "reference" | "identifier" | "figure-label";
 }
 
 export interface PdfTextLine {
@@ -35,6 +36,7 @@ export interface PdfTextBlock {
   preserveOriginal?: boolean;
   formulas?: PdfFormula[];
   tocPart?: "title" | "leader";
+  role?: "reference" | "identifier" | "figure-label";
 }
 
 interface TextLine {
@@ -47,6 +49,8 @@ interface TextLine {
   fontWeight: number;
   preserveOriginal?: boolean;
   tocPart?: "title" | "leader";
+  families: Map<string, number>;
+  weights: Map<number, number>;
 }
 
 export function normalizePdfTextItems(
@@ -77,7 +81,7 @@ export function extractTextBlocks(
   pageNumber: number,
   measure?: PdfTextMeasure
 ): PdfTextBlock[] {
-  const protectedMath = protectPdfMath(splitTocTextItems(items.map(preserveRotatedText), measure), measure);
+  const protectedMath = protectPdfMath(splitTocTextItems(repairSplitWords(items).map(preserveRotatedText), measure), measure);
   const lines = collectLines(protectedMath.items);
   return collectParagraphs(lines)
     .map((block, index) => {
@@ -190,11 +194,13 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
   let current: TextLine | undefined;
   let previousX = Number.NEGATIVE_INFINITY;
   let previousEndedLine = false;
+  let explicitSpace = false;
 
   for (const item of items) {
     const text = normalizeText(item.str);
     if (!text) {
       previousEndedLine ||= Boolean(item.hasEOL);
+      explicitSpace ||= /\s/u.test(item.str);
       continue;
     }
 
@@ -203,7 +209,7 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
     const width = Math.max(0, Number(item.width) || 0);
     const height = Math.max(1, Number(item.height) || Math.abs(Number(item.transform[3])) || 10);
     const separatedOnSameLine = current
-      ? isSameVisualLine(current, y, height) && hasLargeHorizontalGap(current, x)
+      ? isSameVisualLine(current, y, height) && hasLargeHorizontalGap(current, x, height)
       : false;
     const movedToAnotherLine = current
       ? current.preserveOriginal || item.preserveOriginal
@@ -223,20 +229,29 @@ function collectLines(items: ReadonlyArray<PdfTextItemLike>): TextLine[] {
         height,
         fontFamily: item.fontFamily || "Arial, sans-serif",
         fontWeight: item.fontWeight ?? 400,
+        families: new Map([[item.fontFamily || "Arial, sans-serif", text.length]]),
+        weights: new Map([[item.fontWeight ?? 400, text.length]]),
         ...(item.preserveOriginal ? { preserveOriginal: true } : {}),
         ...(item.tocPart ? { tocPart: item.tocPart } : {})
       };
       lines.push(current);
     } else {
-      current.text = joinText(current.text, text);
+      const touches = x - previousX <= height * 0.12 && !explicitSpace && /\p{L}$/u.test(current.text) && /^\p{L}/u.test(text);
+      current.text = touches ? current.text + text : joinText(current.text, text);
       current.x = Math.min(current.x, x);
       current.right = Math.max(current.right, x + width);
       current.height = Math.max(current.height, height);
-      current.fontWeight = Math.max(current.fontWeight, item.fontWeight ?? 400);
+      const family = item.fontFamily || "Arial, sans-serif";
+      const weight = item.fontWeight ?? 400;
+      current.families.set(family, (current.families.get(family) ?? 0) + text.length);
+      current.weights.set(weight, (current.weights.get(weight) ?? 0) + text.length);
+      current.fontFamily = [...current.families].sort((a, b) => b[1] - a[1])[0][0];
+      current.fontWeight = [...current.weights].sort((a, b) => b[1] - a[1])[0][0];
     }
 
     previousX = x + width;
     previousEndedLine = Boolean(item.hasEOL);
+    explicitSpace = false;
   }
 
   return lines;
@@ -246,12 +261,15 @@ function isSameVisualLine(line: TextLine, y: number, height: number): boolean {
   return Math.abs(line.y - y) <= Math.max(2.5, Math.min(line.height, height) * 0.55);
 }
 
-function hasLargeHorizontalGap(line: TextLine, nextX: number): boolean {
+function hasLargeHorizontalGap(line: TextLine, nextX: number, height: number): boolean {
   const gap = nextX - line.right;
   if (gap <= 0) return false;
   const glyphCount = Math.max(1, Array.from(line.text.replace(/\s/gu, "")).length);
   const averageGlyphWidth = Math.max(1, (line.right - line.x) / glyphCount);
-  const maximumWordGap = Math.max(6, line.height * 0.55, averageGlyphWidth * 1.75);
+  // Justified prose can have spaces almost an em wide. A change in size still
+  // marks a separate field; multi-column tables retain their wider gutters.
+  const matchingSize = Math.max(line.height, height) / Math.min(line.height, height) < 1.15;
+  const maximumWordGap = Math.max(6, line.height * (matchingSize ? 1.05 : 0.55), averageGlyphWidth * 1.75);
   return gap > maximumWordGap;
 }
 
@@ -269,7 +287,7 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
       height: line.height
     }));
     blocks.push({
-      text: normalizedLines.map((line) => line.text).join(" "),
+      text: joinParagraphLines(normalizedLines),
       lines: normalizedLines,
       fontFamily: current[0].fontFamily,
       fontWeight: Math.max(...current.map((line) => line.fontWeight)),
@@ -282,14 +300,14 @@ function collectParagraphs(lines: TextLine[]): Omit<PdfTextBlock, "id" | "transl
 
   for (const line of lines) {
     const previous = current.at(-1);
-    if (previous && !canJoinParagraph(previous, line)) commit();
+    if (previous && !canJoinParagraph(previous, line, current)) commit();
     current.push(line);
   }
   commit();
   return blocks;
 }
 
-function canJoinParagraph(previous: TextLine, next: TextLine): boolean {
+function canJoinParagraph(previous: TextLine, next: TextLine, paragraph: TextLine[]): boolean {
   if (previous.preserveOriginal || next.preserveOriginal || previous.tocPart || next.tocPart) return false;
   const verticalGap = Math.abs(previous.y - next.y);
   const averageHeight = (previous.height + next.height) / 2;
@@ -299,12 +317,43 @@ function canJoinParagraph(previous: TextLine, next: TextLine): boolean {
     && Math.abs(previous.fontWeight - next.fontWeight) < 300;
   const previousEndsSentence = /[.!?。！？:：]$/u.test(previous.text.trim());
   const nextStartsList = /^[•●▪◦·‣⁃\-*]\s*/u.test(next.text.trim());
+  const paragraphWidth = Math.max(...paragraph.map((line) => line.right)) - Math.min(...paragraph.map((line) => line.x));
+  const indentedParagraph = previousEndsSentence && next.x > Math.min(...paragraph.map((line) => line.x)) + averageHeight * 0.5;
+  const shortLastLine = previousEndsSentence && previous.right - previous.x < paragraphWidth * 0.88;
+  // An acronym in a chart key is one label, not the first line of the next
+  // label. Their colour markers are independent graphical objects.
+  const identifierLabel = /^[A-Z][A-Z0-9-]{1,10}$/u.test(previous.text.trim());
+  const referenceEntry = /^\[?\d{1,3}[\].)]?\s+[\p{L}]/u.test(next.text.trim());
   return verticalGap <= averageHeight * 1.75
     && sameColumn
     && sameSize
     && sameStyle
-    && !previousEndsSentence
-    && !nextStartsList;
+    && !indentedParagraph && !shortLastLine && !identifierLabel
+    && !nextStartsList && !referenceEntry;
+}
+
+function joinParagraphLines(lines: PdfTextLine[]): string {
+  return lines.reduce((text, line) => {
+    if (!text) return line.text;
+    // A discretionary line-end hyphen separates pieces of one word. Keep
+    // genuine compounds (real-time, post-operative) using a conservative list.
+    if (/[a-z]{2,}\s*[-‐]\s*$/iu.test(text) && /^[a-z]/u.test(line.text)) {
+      const prefix = /([a-z]+)\s*[-‐]\s*$/iu.exec(text)?.[1] ?? "";
+      return text.replace(/\s*[-‐]\s*$/u, /^(?:real|time|post|pre|non|cross|two|three|self|well|so)$/iu.test(prefix) ? "-" : "") + line.text;
+    }
+    return `${text} ${line.text}`;
+  }, "");
+}
+
+function repairSplitWords(items: ReadonlyArray<PdfTextItemLike>): PdfTextItemLike[] {
+  const words = new Set(items.flatMap((item) => item.str.toLowerCase().match(/[a-z]{5,}/gu) ?? []));
+  const commonWord = /^(?:a|an|as|at|be|by|do|for|he|if|in|is|it|of|on|or|so|the|to|we)$/u;
+  return items.map((item) => ({ ...item, str: item.str
+    .replace(/\b([a-z]{2,})\s+[-‐]\s*([a-z]{2,})\b/gu,
+      (_match, left: string, right: string) => words.has(left + right) || /^(?:re|un|ex|com|con|trans|inter)$/u.test(left)
+        ? left + right : `${left}-${right}`)
+    .replace(/\b([a-z]{2,})\s+(?=([a-z]{2,})\b)/gu,
+      (match, left: string, right: string) => !commonWord.test(left) && words.has(left + right) ? left : match) }));
 }
 
 function joinText(left: string, right: string): string {
@@ -327,5 +376,5 @@ function normalizeText(value: string): string {
 }
 
 function isTranslatableText(value: string): boolean {
-  return value.length > 0 && /\p{L}/u.test(value);
+  return value.length > 0 && /\p{L}/u.test(value) && !/^[A-Za-z]$/u.test(value.trim());
 }

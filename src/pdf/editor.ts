@@ -34,6 +34,7 @@ export function createEditableTranslationBlock(
   block.dataset.blockId = options.id;
   block.dataset.testid = "pdf-translation-block";
   block.dataset.preferredFontSize = String(options.fontSize);
+  if (options.maximumAutoHeight !== undefined) block.dataset.maximumAutoHeight = String(options.maximumAutoHeight);
   setGeometry(block, options);
 
   const text = document.createElement("div");
@@ -96,7 +97,8 @@ export function fitTranslationBlock(block: HTMLElement): void {
   const coordinateScale = Number(block.parentElement?.dataset.coordinateScale) || 1;
   delete block.dataset.layoutOverflow;
   const range = document.createRange();
-  const fits = (size: number): boolean => {
+  let fittedInset = 0;
+  const legacyFits = (size: number): boolean => {
     setTranslationFontSize(block, size);
     text.style.paddingTop = "0px";
     const bounds = text.getBoundingClientRect();
@@ -110,17 +112,50 @@ export function fitTranslationBlock(block: HTMLElement): void {
     // particular, their zero origin must not become a page-sized top inset.
     const inset = content.width > 0 && content.height > 0 && measuredInset <= size * 2 ? measuredInset : 0;
     if (inset) text.style.paddingTop = `${inset}px`;
+    fittedInset = inset;
     return text.scrollHeight <= text.clientHeight + 1 && text.scrollWidth <= text.clientWidth + 1;
   };
-  if (fits(initialSize)) return;
+  const fits = (size: number): boolean => {
+    // Some engines defer restyling an existing editable text frame until the
+    // next paint, even when range/scroll metrics are read synchronously. A new
+    // measuring frame starts with the candidate's complete style and cannot
+    // return the preceding candidate's cached font metrics.
+    let probe = text.cloneNode(true) as HTMLElement;
+    scaleTranslationText(probe, size);
+    Object.assign(probe.style, { position: "absolute", left: "0px", top: "0px", visibility: "hidden", pointerEvents: "none",
+      width: block.style.width, height: block.style.height, paddingTop: "0px" });
+    block.append(probe);
+    if (!probe.clientWidth || !probe.clientHeight) { probe.remove(); return legacyFits(size); }
+    const bounds = probe.getBoundingClientRect(), scale = bounds.width / probe.clientWidth;
+    range.selectNodeContents(probe);
+    const content = range.getBoundingClientRect();
+    const inset = scale ? Math.max(0, (bounds.top - content.top) / scale) : 0;
+    fittedInset = content.width > 0 && content.height > 0 && inset <= size * 2 ? inset : 0;
+    if (fittedInset) {
+      const adjusted = probe.cloneNode(true) as HTMLElement;
+      adjusted.style.paddingTop = `${fittedInset}px`;
+      probe.remove(); probe = adjusted; block.append(probe);
+    }
+    const fit = probe.scrollHeight <= probe.clientHeight + 1 && probe.scrollWidth <= probe.clientWidth + 1;
+    probe.remove();
+    return fit;
+  };
+  const apply = (size: number): void => { setTranslationFontSize(block, size); text.style.paddingTop = `${fittedInset}px`; };
+  if (fits(initialSize)) { apply(initialSize); return; }
+  const maximumHeight = Number(block.dataset.maximumAutoHeight);
+  if (maximumHeight > numericStyle(block.style.height)) {
+    growTranslationBlock(block, block.parentElement!, maximumHeight);
+    if (fits(initialSize)) { apply(initialSize); return; }
+  }
   // A single extra wrapped line does not mean the font should be halved.
   // Find the largest size that fits, including the browser's font metrics.
-  let low = Math.min(coordinateScale, initialSize);
+  let low = Math.max(Math.min(coordinateScale, initialSize), initialSize * 0.6);
   let high = initialSize;
   if (!fits(low)) {
     // There is no valid lower bound: committing it leaves a 1px line box
     // around a larger glyph (or bad inset) and can make all text disappear.
     fits(initialSize);
+    apply(initialSize);
     block.dataset.layoutOverflow = "true";
     return;
   }
@@ -130,12 +165,17 @@ export function fitTranslationBlock(block: HTMLElement): void {
     else high = middle;
   }
   fits(low);
+  apply(low);
 }
 
 export function setTranslationFontSize(block: HTMLElement, size: number): void {
   const text = block.querySelector<HTMLElement>(".translation-block-text");
+  if (text) scaleTranslationText(text, size);
+}
+
+function scaleTranslationText(text: HTMLElement, size: number): void {
   const current = numericStyle(text?.style.fontSize ?? "");
-  if (!text || !current || !Number.isFinite(size) || size <= 0) return;
+  if (!current || !Number.isFinite(size) || size <= 0) return;
   const ratio = size / current;
   text.style.fontSize = `${size}px`;
   text.style.lineHeight = `${numericStyle(text.style.lineHeight) * ratio}px`;

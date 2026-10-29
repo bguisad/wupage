@@ -8,7 +8,11 @@ import { browserTarget } from './browser-target.mjs';
 export async function openExtensionBrowser(root, output, firefox = false) {
   await fs.mkdir(output, { recursive: true });
   if (firefox) {
-    const browser = await startFirefox(output, path.join(root, 'dist-firefox'));
+    const browser = await startFirefox(output, path.join(root, 'dist-firefox'), {
+      'browser.download.folderList': 2, 'browser.download.dir': path.resolve(output),
+      'browser.download.useDownloadDir': true, 'browser.helperApps.neverAsk.saveToDisk': 'application/pdf',
+      'pdfjs.disabled': true
+    });
     try {
       const result = await browser.command('WebDriver:GetWindowHandle');
       const control = result.value ?? result;
@@ -32,6 +36,17 @@ export async function openExtensionBrowser(root, output, firefox = false) {
         resize: async (width, height) => {
           await select(page); await browser.command('WebDriver:SetWindowRect', { width, height });
         },
+        download: async (source, destination) => {
+          const before = new Set(await fs.readdir(output));
+          await select(page); await browser.execute(source);
+          for (let attempt = 0; attempt < 600; attempt++) {
+            const files = await fs.readdir(output);
+            const file = files.find(name => !before.has(name) && name.endsWith('.pdf') && !files.includes(name + '.part'));
+            if (file) { await fs.copyFile(path.join(output, file), destination); return destination; }
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+          throw new Error('Firefox PDF download timed out');
+        },
         close: () => browser.close()
       };
     } catch (error) { await browser.close(); throw error; }
@@ -54,6 +69,11 @@ export async function openExtensionBrowser(root, output, firefox = false) {
       navigate: url => page.goto(url),
       capture: name => page.screenshot({ path: path.join(output, name) }),
       resize: (width, height) => page.setViewportSize({ width, height }),
+      download: async (source, destination) => {
+        const pending = page.waitForEvent('download', { timeout: 120000 });
+        await page.evaluate(`(()=>{${source}})()`);
+        const download = await pending; await download.saveAs(destination); return destination;
+      },
       close: () => browser.close()
     };
   } catch (error) { await browser.close(); throw error; }

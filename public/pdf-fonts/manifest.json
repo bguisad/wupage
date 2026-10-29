@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/notofonts/noto-cjk",
+  "revision": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+  "files": {
+    "NotoSansCJKsc-VF.ttf": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf",
+      "sha256": "990c807e79c25662a5a9ecf7f971baeb2bf2eab9a559e5ecf15cdfdb8561d21f",
+      "bytes": 36144788
+    },
+    "OFL.txt": {
+      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "bytes": 4301
+    }
+  }
+}

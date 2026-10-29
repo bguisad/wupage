@@ -11,6 +11,28 @@ afterEach(() => {
 });
 
 describe("editable PDF translation blocks", () => {
+  it("measures fresh candidate frames when the original editable frame reports stale metrics", () => {
+    const layer = createLayer();
+    const block = createEditableTranslationBlock(layer, { id: "stale-metrics", text: "跨浏览器排版", color: "#222", fontFamily: "Arial",
+      fontSize: 16, fontWeight: 400, lineHeight: 20, left: 0, top: 0, width: 80, height: 20 });
+    layer.append(block);
+    const text = block.querySelector<HTMLElement>(".translation-block-text")!;
+    Object.defineProperties(text, { clientWidth: { get: () => 80 }, clientHeight: { get: () => 20 }, scrollHeight: { get: () => 40 } });
+    const clone = text.cloneNode.bind(text);
+    const candidates = vi.spyOn(text, "cloneNode").mockImplementation(() => {
+      const probe = clone(true) as HTMLElement;
+      Object.defineProperties(probe, { clientWidth: { get: () => 80 }, clientHeight: { get: () => 20 }, scrollWidth: { get: () => 80 },
+        scrollHeight: { get: () => Number.parseFloat(probe.style.fontSize) > 10 ? 40 : 20 } });
+      vi.spyOn(probe, "getBoundingClientRect").mockReturnValue({ width: 80, top: 0 } as DOMRect);
+      return probe;
+    });
+    vi.spyOn(document, "createRange").mockReturnValue({ selectNodeContents: vi.fn(), getBoundingClientRect: () => new DOMRect(0, 0, 80, 16) } as unknown as Range);
+    fitTranslationBlock(block);
+    expect(Number.parseFloat(text.style.fontSize)).toBeLessThanOrEqual(10);
+    expect(candidates.mock.calls.length).toBeGreaterThan(1);
+    expect(block.querySelectorAll(".translation-block-text")).toHaveLength(1);
+    expect(block.dataset.layoutOverflow).toBeUndefined();
+  });
   it("does not turn an empty range at viewport origin into a large top inset", () => {
     const layer = createLayer();
     const block = createEditableTranslationBlock(layer, {

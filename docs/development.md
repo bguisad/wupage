@@ -271,6 +271,12 @@ OpenCV 4.10 的构建文件还会移除旧 Emscripten 的 demangler 选项及文
 
 复杂 PDF 的浏览器回归样本、执行方式和覆盖边界见 [PDF 排版回归](pdf-regression.md)。
 
+`src/pdf/document.ts` 在全篇解析后识别参考文献区域、跨页续接和后续章节，按栏位置保留条目而不跳过同页正文；目录标题不启动文献区域。文内定义的缩写用于表格标识保护和翻译上下文，图编号、统计数值及网址通过已有占位符校验与恢复。正文分组按主要字体和实际字距处理两端对齐、行内引用及断词，图例标识单独成块。排版在独立测量节点中试排候选字号，避免 Firefox 复用旧编辑节点的字体度量；使用放大的内部坐标减少小字号度量误差，并设置自动缩字下限及溢出提示。
+
+`src/pdf/vector-export.ts` 使用 PDF 内容流词法分析移除被替换的原文，保留普通路径和图像，并按预览的实际字形位置嵌入可搜索文字。内置 Noto Sans CJK TrueType 可变字体固定到常规字重，导出时仅嵌入所需字形；来源版本、校验值和 SIL OFL 许可证位于 `public/pdf-fonts/`。未翻译的整页复制原页，保留片段和公式保留外观并附搜索文字；遇到内联图像、文字裁剪或可选图层等不能安全重写的情况，使用现有预览图像和文字层。字体处理在本地执行。
+
+构建后运行 `npm run test:pdf:academic`、`npm run test:pdf:academic:edge` 或 `npm run test:pdf:academic:firefox`。测试使用独立浏览器和本地模拟服务，检查双栏参考文献、后续附录、缩写、图例、变量、裁剪与旋转页面、字号下限、真实下载和 Unicode 文字提取。直接运行脚本并传入 `--file=<本地论文路径>` 可补充真实文档回归；不上传文件，也不以模拟译文衡量模型质量。报告和截图位于 `.npm-cache/pdf-academic/<浏览器>/`，支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER`、`EDGE_TEST_BROWSER` 和 `FIREFOX_BINARY`。
+
 构建后运行 `npm run test:pdf-scope` 可验证阅读范围调度。需要可选的 Playwright 与 Chromium，支持以下 GitHub 排版测试相同的环境变量。测试加载真实扩展，使用本地 40 页 PDF 和模拟翻译服务，验证选择文件、拖放、输入地址及切换文档后的默认自动翻译、滚动自动补译、快速跳页、重叠范围与手动编辑保留、设置切换，以及下载前补全全文翻译、直接下载与重复导出复用。手动调度与直接下载场景显式使用 `translate=0` 隔离自动启动。`tests/pdf-download.test.ts` 另覆盖切换语言、空白页、翻译失败或响应不完整后的下载拦截与重试，以及切换文档时取消下载。报告保存在 `.npm-cache/pdf-scope/`。
 
 ### GitHub 代码注释排版回归

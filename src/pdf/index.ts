@@ -28,6 +28,7 @@ import {
 import { createEditableTranslationBlock, fitTranslationBlock } from "./editor";
 import {
   buildRasterPdf,
+  collectPdfExportScene,
   canvasToJpegBytes,
   composeTranslatedPageCanvas,
   downloadPdfBytes,
@@ -40,6 +41,7 @@ import { extractTextBlocks, normalizePdfTextItems, type PdfTextBlock } from "./m
 import { renderPageWithoutText } from "./rendering";
 import { filterVisiblePdfText } from "./visibility";
 import { validatePdfMathTranslation } from "./math";
+import { preparePdfDocument, preparePdfTranslation, pdfPageTranslationContext, type PdfDocumentContext } from "./document";
 import { createFormulaImages, getFormulaViewportRect } from "./math-rendering";
 import { findReadingPage, selectPdfTranslationPages, takeNearestPage } from "./scheduling";
 import "./styles.css";
@@ -53,6 +55,7 @@ const PDF_DOWNLOAD_TIMEOUT_MS = 30_000;
 const PDF_OPEN_TIMEOUT_MS = 45_000;
 const TRANSLATION_PAGE_TIMEOUT_MS = 120_000;
 const TRANSLATION_SCROLL_DELAY_MS = 200;
+let documentContext: PdfDocumentContext = { context: "", abbreviations: new Map() };
 
 interface PdfPageState {
   pageNumber: number;
@@ -314,6 +317,7 @@ async function loadPdf(data: ArrayBuffer, name: string, autoTranslate: boolean):
   pdfDocument = undefined;
   pdfLoadingTask = undefined;
   pageStates = [];
+  documentContext = { context: "", abbreviations: new Map() };
   renderedPages = new Set();
   pageRenderTasks = new Map();
   renderObserver?.disconnect();
@@ -396,6 +400,11 @@ async function loadPdf(data: ArrayBuffer, name: string, autoTranslate: boolean):
     pdfLoadingTask = undefined;
     throw error;
   }
+  documentContext = preparePdfDocument(parsedPages.map(({ page, blocks, textContent }) => {
+    const viewport = page.getViewport({ scale: 1 });
+    return { blocks, width: viewport.width, height: viewport.height,
+      sourceText: textContent.items.flatMap((item) => "str" in item ? [item.str] : []).join(" ") };
+  }), currentDocumentName);
   parsedPages.forEach(({ page, blocks, textContent }, index) => {
     const pageState = createPageState(page, index + 1, blocks, textContent);
     pageStates.push(pageState);
@@ -588,7 +597,10 @@ function renderTranslatedPdfPage(pageState: PdfPageState): void {
   // PDF.js already measures the browser's enforced minimum font size. Use
   // enlarged text coordinates and an inverse layer transform, as its original
   // text layer does, so small PDF text remains editable at its intended size.
-  const coordinateScale = Math.max(1, Number.parseFloat(pageState.originalTextLayer.style.getPropertyValue("--min-font-size")) || 1);
+  // Firefox's CJK fallback fonts quantize tiny glyph metrics even when its
+  // Latin minimum-font probe reports 1px. Keep fractional PDF text in a larger
+  // coordinate space, then scale the whole layer back to the page geometry.
+  const coordinateScale = Math.max(4, Number.parseFloat(pageState.originalTextLayer.style.getPropertyValue("--min-font-size")) || 1);
   pageState.translationLayer.dataset.coordinateScale = String(coordinateScale);
   pageState.translatedCanvasShell.className = "canvas-shell translation-canvas-shell is-rendered";
   syncTranslationLayer(pageState);
@@ -919,10 +931,11 @@ function pumpTranslationQueue(session: PdfTranslationSession): void {
 async function translatePage(session: PdfTranslationSession, page: PdfPageState): Promise<void> {
   try {
     const translatableBlocks = page.blocks.filter((block) => block.translatable);
+    const inputs = translatableBlocks.map((block) => preparePdfTranslation(block, documentContext.abbreviations));
     const result = await withTimeout(
       sendRuntimeMessage<TranslateBatchResponse>({
-        type: "TRANSLATE_BATCH", texts: translatableBlocks.map((block) => block.text),
-        preservePlaceholders: true, ...session.requestOptions
+        type: "TRANSLATE_BATCH", texts: inputs.map((input) => input.text),
+        context: pdfPageTranslationContext(documentContext, page.blocks), preservePlaceholders: true, ...session.requestOptions
       } satisfies RuntimeRequest),
       TRANSLATION_PAGE_TIMEOUT_MS, `第 ${page.pageNumber} 页翻译`
     );
@@ -930,7 +943,9 @@ async function translatePage(session: PdfTranslationSession, page: PdfPageState)
     let translationIndex = 0;
     const translations = page.blocks.map((block) => {
       if (!block.translatable) return block.text;
-      const translation = result.translations[translationIndex++];
+      const input = inputs[translationIndex];
+      const raw = result.translations[translationIndex++];
+      const translation = raw?.trim() ? input.restore(raw) : raw;
       if (!translation?.trim()) throw new Error("翻译服务返回的译文不完整，请重试。");
       validatePdfMathTranslation(translation, block.formulas);
       return translation;
@@ -1032,7 +1047,9 @@ async function downloadTranslatedDocument(): Promise<void> {
         width: page.pdfWidth,
         height: page.pdfHeight,
         imageBytes,
-        format: "jpeg"
+        format: "jpeg",
+        scene: await collectPdfExportScene(page.canvas, page.translationLayer, page.blocks, page.pdfWidth, page.pdfHeight,
+          Array.from((await documentProxy.getPage(page.pageNumber)).getViewport({ scale: 1 }).transform ?? []))
       });
       const percentage = Math.round(((index + 1) / pageStates.length) * 85);
       progressBar.style.width = `${percentage}%`;
@@ -1040,7 +1057,7 @@ async function downloadTranslatedDocument(): Promise<void> {
     }
 
     const fileName = translatedPdfFileName(currentDocumentName);
-    const bytes = await buildRasterPdf(rasterPages, fileName.replace(/\.pdf$/iu, ""));
+    const bytes = await buildRasterPdf(rasterPages, fileName.replace(/\.pdf$/iu, ""), await documentProxy.getData?.());
     if (translationSession !== session || pdfDocument !== documentProxy) return;
     progressBar.style.width = "100%";
     downloadPdfBytes(bytes, fileName);

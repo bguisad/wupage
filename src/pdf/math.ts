@@ -30,32 +30,43 @@ export function protectPdfMath(items: ReadonlyArray<PdfTextItemLike>, measure?: 
   formulas: PdfFormula[];
 } {
   const tokens = items.flatMap((item) => splitProseBoundary(item, measure));
+  const citations = new Set(tokens.filter((item, index) => {
+    if (!/^\d+(?:[–,\-]\d+)*$/u.test(item.str.trim())) return false;
+    return [tokens[index - 1], tokens[index + 1]].some((near) => near && isProse(near.str)
+      && itemSize(item) < itemSize(near) * 0.85
+      && Number(item.transform[5]) > Number(near.transform[5]) + itemSize(near) * 0.12
+      && Math.abs(Number(item.transform[5]) - Number(near.transform[5])) < itemSize(near) * 0.7
+      && Math.min(Math.abs(Number(item.transform[4]) - Number(near.transform[4]) - (near.width ?? 0)),
+        Math.abs(Number(near.transform[4]) - Number(item.transform[4]) - (item.width ?? 0))) < itemSize(near) * 1.5);
+  }));
   const functionNames = new Set(tokens.filter((item, index) => {
     let nextIndex = index + 1;
     while (nextIndex < tokens.length && !tokens[nextIndex].str.trim()) nextIndex += 1;
     const next = tokens[nextIndex];
     return /^[A-Za-z][A-Za-z0-9]+$/u.test(item.str.trim()) && next
       && /^\s*\(/u.test(next.str) && (!isProse(next.str) || isMathFontItem(next))
+      && !/^\s*\(\s*[A-Za-z]\s*=\s*[\d.,]+\s*\)\s*$/u.test(next.str)
       && Math.abs(Number(item.transform[5]) - Number(next.transform[5])) < itemSize(item) * 0.5
       && Math.abs(Number(next.transform[4]) - Number(item.transform[4]) - (item.width ?? 0)) < itemSize(item);
   }));
-  const isMathItem = (item: PdfTextItemLike): boolean => isMathFontItem(item) || functionNames.has(item);
+  const isMathItem = (item: PdfTextItemLike): boolean => isMathFontItem(item) || functionNames.has(item) || citations.has(item);
   const output: PdfTextItemLike[] = [];
   const formulas: PdfFormula[] = [];
   let pending: PdfTextItemLike[] = [];
   const flush = (next?: PdfTextItemLike): void => {
     let visible = pending.filter((item) => item.str.trim());
-    const anchored = visible.some((item) => isMathFontItem(item) || MATH_SYMBOL.test(item.str));
+    const anchored = visible.some((item) => isMathItem(item) || MATH_SYMBOL.test(item.str));
     if (!anchored || !visible.length) {
       output.push(...pending);
     } else {
       const size = Math.max(...visible.map(itemSize));
       const baseline = visible.reduce((best, item) => itemSize(item) >= itemSize(best) && !/CMEX/iu.test(item.fontName ?? "") ? item : best, visible[0]);
-      const baselineY = Number(baseline.transform[5]);
+      let baselineY = Number(baseline.transform[5]);
       const previous = [...output].reverse().find((item) => item.str.trim());
+      const citation = visible.every((item) => citations.has(item));
       const inline = [previous, next].some((item) => item && isProse(item.str)
         && !isMathItem(item) && !/⟪WUPAGE\d+⟫/u.test(item.str)
-        && Math.abs(Number(item.transform[5]) - baselineY) <= size * 0.65);
+        && Math.abs(Number(item.transform[5]) - baselineY) <= (citation ? itemSize(item) * 0.7 : size * 0.65));
       // Sentence punctuation belongs to the prose. Baking it into an inline
       // image hides it from the translator and produces duplicated commas/full
       // stops when the translated sentence supplies its own punctuation.
@@ -110,18 +121,22 @@ export function protectPdfMath(items: ReadonlyArray<PdfTextItemLike>, measure?: 
         if (nextTop < lowestBaseline) bottom = Math.max(bottom, nextTop + size * 0.08);
       }
       const top = Math.max(...glyphBounds.map((bounds) => bounds.top)) + padding;
+      const prose = citation ? [previous, next].find((item) => item && isProse(item.str)
+        && !isMathItem(item) && Math.abs(Number(item.transform[5]) - baselineY) < itemSize(item) * 0.7) : undefined;
+      if (prose) baselineY = Number(prose.transform[5]);
+      const fontSize = prose ? itemSize(prose) : size;
       const formula: PdfFormula = {
         placeholder: `⟪WUPAGE${formulas.length}⟫`,
         text: visible.map((item) => item.str).join(""),
         x: left, y: bottom, width: right - left, height: top - bottom,
-        baselineY, fontSize: size, display: !inline
+        baselineY, fontSize, display: !inline
       };
       formulas.push(formula);
       output.push({
         str: formula.placeholder,
-        transform: [1, 0, 0, size, left, baselineY],
+        transform: [1, 0, 0, fontSize, left, baselineY],
         width: formula.width,
-        height: size,
+        height: fontSize,
         hasEOL: !inline,
         fontFamily: (inline && (previous?.fontFamily || next?.fontFamily)) || baseline.fontFamily,
         preserveOriginal: !inline
@@ -168,7 +183,9 @@ export function protectPdfMath(items: ReadonlyArray<PdfTextItemLike>, measure?: 
       // a tiny crop containing only the upper half of the bracket.
       const attachedDelimiter = EXTENSION_FONT.test(token.fontName ?? "")
         && nextX >= firstX - size && nextX <= lastX + size;
-      if ((verticalJump > size * 2.8 && !attachedDelimiter) || (wrapped && !attachedDelimiter)) flush(token);
+      const separated = verticalJump < size * 0.5 && nextX - lastX > size * 2.5
+        && !(MATH_FONT.test(previous.fontName ?? "") && MATH_FONT.test(token.fontName ?? ""));
+      if ((verticalJump > size * 2.8 || wrapped || separated) && !attachedDelimiter) flush(token);
     }
     pending.push(token);
   }
@@ -177,8 +194,10 @@ export function protectPdfMath(items: ReadonlyArray<PdfTextItemLike>, measure?: 
 }
 
 function isMathFontItem(item: PdfTextItemLike): boolean {
+  const shortIdentifier = /^[A-Za-zΑ-Ωα-ω]{1,2}$/u.test(item.str.trim())
+    && !/^(?:an|as|at|be|by|do|he|if|in|is|it|me|my|no|of|on|or|so|to|up|us|we)$/iu.test(item.str.trim());
   return MATH_FONT.test(item.fontName ?? "")
-    || (/Italic|(?:^|[-+])It$/iu.test(item.fontName ?? "") && /^[A-Z]{2}$/u.test(item.str.trim()));
+    || (/Italic|(?:^|[-+])It$/iu.test(item.fontName ?? "") && (shortIdentifier || /^[A-Z]{2}$/u.test(item.str.trim())));
 }
 
 function isProse(text: string): boolean {
@@ -220,7 +239,7 @@ function sliceTextItem(item: PdfTextItemLike, start: number, end: number, measur
   return { ...item, str: item.str.slice(start, end), transform, width: right - left, hasEOL: end === item.str.length && item.hasEOL };
 }
 
-export function validatePdfMathTranslation(text: string, formulas: ReadonlyArray<PdfFormula> = []): void {
+export function validatePdfMathTranslation(text: string, formulas: ReadonlyArray<Pick<PdfFormula, "placeholder">> = []): void {
   const expected = formulas.map((formula) => formula.placeholder).sort();
   const actual = (text.match(/⟪WUPAGE\d+⟫/gu) ?? []).sort();
   if (expected.length !== actual.length || expected.some((token, index) => token !== actual[index])) {

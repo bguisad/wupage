@@ -6,7 +6,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export async function startFirefox(output, extension) {
+export async function startFirefox(output, extension, preferences = {}) {
   await fs.mkdir(output, { recursive: true });
   const profile = await fs.mkdtemp(path.join(output, 'profile-'));
   const reservation = net.createServer();
@@ -21,7 +21,8 @@ export async function startFirefox(output, extension) {
     'browser.aboutwelcome.enabled': false,
     'datareporting.policy.dataSubmissionEnabled': false,
     'toolkit.telemetry.reportingpolicy.firstRun': false,
-    'browser.newtabpage.enabled': false
+    'browser.newtabpage.enabled': false,
+    ...preferences
   };
   await fs.writeFile(path.join(profile, 'user.js'), Object.entries(prefs)
     .map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`).join('\n'));
