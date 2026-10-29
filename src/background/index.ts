@@ -11,7 +11,7 @@ import { initializeOllamaCompatibility } from "./ollama-compatibility";
 import { requestLocal } from "./local";
 import { lookupDictionary, playDictionaryAudio, stopDictionaryAudio } from "./dictionary";
 import { normalizeSelectionTranslation } from "../shared/dictionary";
-import { cancelVideo, clearVideoTab, openVideoInTab, registerVideoFrame, translateVideo } from "./video";
+import { cancelVideo, clearVideoTab, initVideoSettings, openVideoInTab, registerVideoFrame, translateVideo } from "./video";
 import { checkDoubao, getDoubaoStatus } from "./doubao";
 import { initializeDoubaoCompatibility } from "./doubao-compatibility";
 import { runtimeErrorResponse } from "../shared/errors";
@@ -21,6 +21,7 @@ import { readParagraphMode } from "../shared/paragraph-mode";
 import { saveParagraphMode } from "./paragraph-mode";
 
 frameSessions.install();
+initVideoSettings();
 
 chrome.tabs?.onRemoved?.addListener(clearVideoTab);
 

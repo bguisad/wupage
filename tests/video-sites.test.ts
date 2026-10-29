@@ -53,7 +53,7 @@ describe("site subtitle data", () => {
   });
   it("normalizes display preferences and keeps Simplified/Traditional Chinese separate", () => {
     expect(normalizeVideoTranslation({ fontSize: 999, background: "url(x)", enabledSites: ["youtube", "youtube", "evil/*"] }))
-      .toEqual({ fontSize: 22, background: "soft", enabledSites: ["youtube"], showOriginal: true, preferredSource: "auto" });
+      .toEqual({ enabled: true, fontSize: 22, background: "soft", enabledSites: ["youtube"], showOriginal: true, preferredSource: "auto" });
     expect(sameVideoLanguage("en-US", "en")).toBe(true);
     expect(sameVideoLanguage("zh-Hans", "zh-CN")).toBe(true);
     expect(sameVideoLanguage("zh-TW", "zh-CN")).toBe(false);

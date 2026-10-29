@@ -14,7 +14,9 @@ export function initEmbeddedVideoSubtitles(): void {
       module.initVideoSubtitles();
       chrome.runtime.onMessage.addListener((request, _sender, respond) => {
         if (request.type !== "OPEN_VIDEO_SUBTITLES") return;
-        respond({ ok: true, data: module.openVideoSubtitles() });
+        void module.openVideoSubtitles().then((data: { opened: boolean }) => respond({ ok: true, data }),
+          (error: unknown) => respond({ ok: false, error: String(error) }));
+        return true;
       });
       observer.disconnect(); clearInterval(interval); clearTimeout(timer);
       document.removeEventListener("loadedmetadata", schedule, true);

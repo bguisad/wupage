@@ -1,17 +1,45 @@
 import { PlayerSubtitleController } from "./video-player";
 import { playerContainer, queryVideoRoots, videoPlatform } from "../video/platforms";
 import { sendRuntimeRequest } from "./runtime";
-import { videoPriority } from "../shared/video";
+import { normalizeVideoTranslation, videoPriority } from "../shared/video";
+import { SETTINGS_KEY } from "../shared/defaults";
+import { createSettingsSnapshot } from "../shared/settings-snapshot";
+import type { ExtensionSettings } from "../shared/types";
 
 let current: VideoSubtitleManager | undefined;
+let feature: { ready: Promise<void>; refresh: () => Promise<void> } | undefined;
 
 export function initVideoSubtitles(): void {
-  if (current || typeof location === "undefined" || typeof document === "undefined" || !/^https?:$/u.test(location.protocol) || !document.documentElement) return;
-  current = new VideoSubtitleManager();
+  if (feature || typeof location === "undefined" || typeof document === "undefined" || !/^https?:$/u.test(location.protocol) || !document.documentElement) return;
+  const snapshot = createSettingsSnapshot(() => sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" }));
+  let disposed = false;
+  const apply = (settings: ExtensionSettings) => {
+    if (disposed) return;
+    if (!normalizeVideoTranslation(settings?.videoTranslation).enabled) current?.dispose();
+    else current ??= new VideoSubtitleManager();
+  };
+  const refresh = async () => { const settings = await snapshot.read(); apply(settings); };
+  const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    const settings = changes[SETTINGS_KEY]?.newValue as ExtensionSettings | undefined;
+    if (area !== "local" || !settings) return;
+    snapshot.receive(settings); apply(settings);
+  };
+  const restored = () => { if (feature) feature.ready = refresh().catch(() => {}); };
+  const leave = (event: PageTransitionEvent) => {
+    if (event.persisted) return;
+    disposed = true;
+    chrome.storage?.onChanged?.removeListener?.(changed);
+    window.removeEventListener("pageshow", restored); window.removeEventListener("pagehide", leave);
+    current?.dispose(); feature = undefined;
+  };
+  feature = { ready: Promise.resolve(), refresh };
+  chrome.storage?.onChanged?.addListener(changed);
+  window.addEventListener("pageshow", restored); window.addEventListener("pagehide", leave);
+  feature.ready = refresh().catch(() => {});
 }
 
-export function openVideoSubtitles(): { opened: boolean } {
-  initVideoSubtitles(); return { opened: current?.open() ?? false };
+export async function openVideoSubtitles(): Promise<{ opened: boolean }> {
+  initVideoSubtitles(); await feature?.ready; return { opened: current?.open() ?? false };
 }
 
 export class VideoSubtitleManager {
@@ -27,7 +55,9 @@ export class VideoSubtitleManager {
     this.dispose();
     if (event.persisted) window.addEventListener("pageshow", () => {
       initVideoSubtitles();
-      for (const video of enabled) void current?.players.get(video)?.start();
+      void feature?.ready.then(() => {
+        for (const video of enabled) void current?.players.get(video)?.start();
+      });
     }, { once: true });
   };
   private readonly navigate = () => this.schedule();

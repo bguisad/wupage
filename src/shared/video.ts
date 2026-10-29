@@ -1,4 +1,5 @@
 export interface VideoTranslationSettings {
+  enabled: boolean;
   showOriginal: boolean;
   fontSize: 18 | 22 | 26;
   background: "soft" | "none";
@@ -12,6 +13,7 @@ export function videoPriority(area: number, playing: boolean): number { return a
 export function normalizeVideoTranslation(value: unknown): VideoTranslationSettings {
   const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
+    enabled: data.enabled !== false,
     showOriginal: data.showOriginal !== false,
     fontSize: data.fontSize === 18 || data.fontSize === 26 ? data.fontSize : 22,
     background: data.background === "none" ? "none" : "soft",

@@ -2,12 +2,18 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { initVideoSubtitles, openVideoSubtitles, VideoSubtitleManager } from "../src/content/video-subtitles";
 import { PlayerSubtitleController } from "../src/content/video-player";
+import { DEFAULT_SETTINGS, SETTINGS_KEY } from "../src/shared/defaults";
+import { normalizeVideoTranslation } from "../src/shared/video";
+import { sendRuntimeRequest } from "../src/content/runtime";
 
 vi.mock("../src/content/video-player", () => ({ PlayerSubtitleController: vi.fn() }));
 vi.mock("../src/content/runtime", () => ({ sendRuntimeRequest: vi.fn(async () => null) }));
 let manager: VideoSubtitleManager | undefined;
+let changed: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void;
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.stubGlobal("chrome", { storage: { onChanged: { addListener: (listener: typeof changed) => { changed = listener; }, removeListener: vi.fn() } } });
+  vi.mocked(sendRuntimeRequest).mockImplementation(async request => request.type === "GET_SETTINGS" ? structuredClone(DEFAULT_SETTINGS) : null);
   vi.mocked(PlayerSubtitleController).mockImplementation((video, container) => {
     const player = {
       video, container, enabled: false, get connected() { return video.isConnected; },
@@ -21,7 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   manager?.dispose(); manager = undefined;
   window.dispatchEvent(new Event("pagehide"));
-  document.body.replaceChildren(); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks();
+  document.body.replaceChildren(); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
 it("discovers a video inserted into an already mounted open shadow root", async () => {
@@ -34,17 +40,44 @@ it("discovers a video inserted into an already mounted open shadow root", async 
   expect(PlayerSubtitleController).toHaveBeenCalledTimes(2);
 });
 
-it("reinitializes discovery after a page returns from the browser back-forward cache", () => {
+it("reinitializes discovery after a page returns from the browser back-forward cache", async () => {
   document.body.innerHTML = '<div><video></video></div>';
   initVideoSubtitles();
+  await vi.advanceTimersByTimeAsync(0);
   expect(PlayerSubtitleController).toHaveBeenCalledTimes(1);
   vi.mocked(PlayerSubtitleController).mock.results[0].value.enabled = true;
   const event = new Event("pagehide"); Object.defineProperty(event, "persisted", { value: true });
   window.dispatchEvent(event);
   window.dispatchEvent(new Event("pageshow"));
+  await vi.advanceTimersByTimeAsync(0);
   expect(PlayerSubtitleController).toHaveBeenCalledTimes(2);
   expect(vi.mocked(PlayerSubtitleController).mock.results[1].value.start).toHaveBeenCalledOnce();
-  expect(openVideoSubtitles()).toEqual({ opened: true });
+  await expect(openVideoSubtitles()).resolves.toEqual({ opened: true });
+});
+
+it("removes video controls when globally disabled and restores discovery when enabled again", async () => {
+  document.body.innerHTML = '<div><video></video></div>';
+  initVideoSubtitles(); await vi.advanceTimersByTimeAsync(0);
+  const first = vi.mocked(PlayerSubtitleController).mock.results[0].value;
+  changed({ [SETTINGS_KEY]: { newValue: { ...DEFAULT_SETTINGS, videoTranslation: normalizeVideoTranslation({ enabled: false }) } } }, "local");
+  expect(first.dispose).toHaveBeenCalledOnce();
+  await expect(openVideoSubtitles()).resolves.toEqual({ opened: false });
+  document.querySelector('video')!.replaceWith(document.createElement('video'));
+  await vi.advanceTimersByTimeAsync(6100);
+  expect(PlayerSubtitleController).toHaveBeenCalledTimes(1);
+  changed({ [SETTINGS_KEY]: { newValue: DEFAULT_SETTINGS } }, "local");
+  expect(PlayerSubtitleController).toHaveBeenCalledTimes(2);
+});
+
+it("keeps controls absent when a disable arrives before the initial settings read finishes", async () => {
+  document.body.innerHTML = '<div><video></video></div>';
+  let finish!: (value: typeof DEFAULT_SETTINGS) => void;
+  vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  initVideoSubtitles();
+  changed({ [SETTINGS_KEY]: { newValue: { ...DEFAULT_SETTINGS, videoTranslation: normalizeVideoTranslation({ enabled: false }) } } }, "local");
+  finish(DEFAULT_SETTINGS); await vi.advanceTimersByTimeAsync(0);
+  expect(PlayerSubtitleController).not.toHaveBeenCalled();
+  await expect(openVideoSubtitles()).resolves.toEqual({ opened: false });
 });
 
 it("keeps a manually enabled session when a site replaces the video element", async () => {

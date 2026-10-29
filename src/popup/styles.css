@@ -277,6 +277,10 @@ button.secondary {
   white-space: nowrap;
 }
 
+#videoTranslation {
+  grid-column: 1 / -1;
+}
+
 .feature-button[aria-pressed="true"] {
   color: var(--wp-accent, #116466);
   background: var(--wp-selected, #e4eeeb);
@@ -441,7 +445,8 @@ button.secondary {
   height: 14px;
 }
 
-.image-feature[data-loading] .feature-button {
+.image-feature[data-loading] .feature-button,
+.feature-toggles > .feature-button[data-loading] {
   visibility: hidden;
 }
 

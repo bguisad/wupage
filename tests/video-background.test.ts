@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 import { getSettings } from "../src/shared/settings";
 import { translateWithSettings } from "../src/background/translation";
-import { cancelVideo, clearVideoTab, openVideoInTab, registerVideoFrame, translateVideo } from "../src/background/video";
+import { cancelVideo, clearVideoTab, initVideoSettings, openVideoInTab, registerVideoFrame, translateVideo } from "../src/background/video";
+import { SETTINGS_KEY } from "../src/shared/defaults";
+import { normalizeVideoTranslation } from "../src/shared/video";
 vi.mock("../src/shared/settings", () => ({ getSettings: vi.fn() }));
 vi.mock("../src/background/translation", () => ({ translateWithSettings: vi.fn() }));
 const sender = { tab: { id: 4 }, frameId: 0 } as chrome.runtime.MessageSender;
@@ -10,6 +12,26 @@ const request = { type: "TRANSLATE_VIDEO_SUBTITLES", sessionId: "session", reque
 beforeEach(() => { vi.mocked(getSettings).mockResolvedValue(DEFAULT_SETTINGS); vi.stubGlobal("chrome", { tabs: { sendMessage: vi.fn(async () => ({ ok: true, data: { opened: true } })) } }); });
 afterEach(() => { clearVideoTab(4); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 describe("video frame routing and cancellation", () => {
+  it("rejects opening and translation while the video feature is disabled", async () => {
+    vi.mocked(getSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, videoTranslation: normalizeVideoTranslation({ enabled: false }) });
+    await expect(openVideoInTab(4)).rejects.toThrow("已关闭");
+    await expect(translateVideo({ ...request, texts: ["Hello"] }, sender)).rejects.toThrow("已关闭");
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled(); expect(translateWithSettings).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-flight subtitle request when the feature is globally disabled", async () => {
+    let changed!: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void;
+    Object.assign(chrome, { storage: { onChanged: { addListener: (listener: typeof changed) => { changed = listener; } } } });
+    initVideoSettings();
+    let started!: () => void; const ready = new Promise<void>(resolve => { started = resolve; });
+    vi.mocked(translateWithSettings).mockImplementation((_settings, _request, options) => new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason)); started();
+    }));
+    const task = translateVideo({ ...request, texts: ["Hello"] }, sender);
+    const result = expect(task).rejects.toMatchObject({ name: "AbortError" }); await ready;
+    changed({ [SETTINGS_KEY]: { newValue: { ...DEFAULT_SETTINGS, videoTranslation: normalizeVideoTranslation({ enabled: false }) } } }, "local");
+    await result;
+  });
   it("opens the playing embedded video instead of an unrelated top-frame player", async () => {
     registerVideoFrame({ type: "VIDEO_FRAME_STATUS", videos: 1, area: 1000, playing: false }, sender);
     registerVideoFrame({ type: "VIDEO_FRAME_STATUS", videos: 1, area: 700, playing: true }, { ...sender, frameId: 3 });

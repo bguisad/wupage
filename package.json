@@ -22,6 +22,7 @@
     "test:floating-responsive": "node scripts/test-floating-responsive.mjs",
     "test:selection": "node scripts/test-selection-translation.mjs",
     "test:video": "node scripts/test-video-subtitles.mjs",
+    "test:video:edge": "node scripts/test-video-subtitles.mjs --edge",
     "test:video:sites": "node scripts/test-video-sites.mjs",
     "test:video:firefox": "node scripts/test-video-firefox.mjs",
     "test:video:performance": "node scripts/test-video-performance.mjs",

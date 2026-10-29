@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from "../src/shared/defaults";
 import type { ExtensionSettings, RuntimeRequest, RuntimeResponse } from "../src/shared/types";
 import { PARAGRAPH_MODE_KEY } from "../src/shared/paragraph-mode";
+import { normalizeVideoTranslation } from "../src/shared/video";
 
 describe("popup translation interactions", () => {
   let translate: ReturnType<typeof vi.fn>;
@@ -184,6 +185,36 @@ describe("popup translation interactions", () => {
       translation.resolve({ translated: 1, cached: 0 });
     }
     await vi.waitFor(() => expect(button().classList.contains("is-loading")).toBe(false));
+  });
+
+  it("toggles video subtitles as a saved feature while retaining subtitle preferences", async () => {
+    const runtime = vi.spyOn(chrome.runtime, "sendMessage");
+    stored.videoTranslation = normalizeVideoTranslation({ enabled: true, fontSize: 26, preferredSource: "fr", enabledSites: ["youtube"] });
+    settingsChanged({ [SETTINGS_KEY]: { newValue: stored } }, "local");
+    const toggle = document.querySelector<HTMLButtonElement>("#videoTranslation")!;
+    expect(toggle.closest(".feature-toggles")).not.toBeNull();
+    for (const enabled of [false, true]) {
+      toggle.click(); await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+      expect(toggle.getAttribute("aria-pressed")).toBe(String(enabled));
+      expect(stored.videoTranslation).toMatchObject({ enabled, fontSize: 26, preferredSource: "fr", enabledSites: ["youtube"] });
+    }
+    expect(runtime).not.toHaveBeenCalledWith(expect.objectContaining({ type: "OPEN_VIDEO_SUBTITLES" }));
+  });
+
+  it("restores the video toggle after a failed save and permits retry", async () => {
+    const toggle = document.querySelector<HTMLButtonElement>("#videoTranslation")!;
+    save.mockRejectedValueOnce(new Error("设置保存失败"));
+    toggle.click(); await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector("#status")?.textContent).toBe("设置保存失败");
+    toggle.click(); await vi.waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
+  });
+
+  it("synchronizes the video toggle after settings change on another page", () => {
+    stored.videoTranslation = normalizeVideoTranslation({ enabled: false });
+    settingsChanged({ [SETTINGS_KEY]: { newValue: stored } }, "local");
+    expect(document.querySelector("#videoTranslation")?.getAttribute("aria-pressed")).toBe("false");
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("saves the right-click button independently and restores it after a failed save", async () => {

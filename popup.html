@@ -69,6 +69,10 @@
           <progress id="ocrModelProgress" class="ocr-model-progress" aria-label="OCR 模型下载进度" hidden></progress>
           <p id="ocrModelStatus" class="ocr-model-status" role="status"></p>
         </div>
+        <button id="videoTranslation" type="button" class="feature-button" data-loading disabled aria-pressed="false" title="在所有网页显示字幕翻译入口；关闭后停止字幕翻译并恢复原字幕">
+          <span>视频字幕</span>
+          <span class="feature-indicator" aria-hidden="true"></span>
+        </button>
       </div>
       <div class="actions translation-actions">
         <button id="pageToggle" type="button" disabled>翻译全文</button>
@@ -79,7 +83,6 @@
       </div>
       <span id="paragraphModeHint" class="field-description" hidden>所有网页生效；按住 Ctrl 点击段落翻译，再次点击恢复原文。</span>
       <div class="actions">
-        <button id="openVideoSubtitles" type="button" class="secondary" disabled title="翻译视频已有字幕，支持导入 SRT/VTT">视频字幕</button>
         <button id="openPdfWorkspace" type="button" class="secondary">打开 PDF</button>
       </div>
       <div class="actions">

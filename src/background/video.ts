@@ -1,10 +1,20 @@
 import type { RuntimeRequest } from "../shared/types";
 import { getSettings } from "../shared/settings";
 import { translateWithSettings } from "./translation";
-import { videoPriority } from "../shared/video";
+import { normalizeVideoTranslation, videoPriority } from "../shared/video";
+import { SETTINGS_KEY } from "../shared/defaults";
+import type { ExtensionSettings } from "../shared/types";
 
 const frames = new Map<string, { tab: number; frame: number; area: number; playing: boolean; seen: number }>();
 const requests = new Map<string, AbortController>();
+export function initVideoSettings(): void {
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    const settings = changes[SETTINGS_KEY]?.newValue as ExtensionSettings | undefined;
+    if (area !== "local" || !settings || normalizeVideoTranslation(settings.videoTranslation).enabled) return;
+    for (const controller of requests.values()) controller.abort(new DOMException("视频字幕已关闭。", "AbortError"));
+    frames.clear();
+  });
+}
 const validId = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,100}$/u.test(value);
 function owner(sender: chrome.runtime.MessageSender): string {
   if (!Number.isInteger(sender.tab?.id) || !Number.isInteger(sender.frameId)) throw new Error("字幕请求需要来自视频页面。");
@@ -21,6 +31,7 @@ export function registerVideoFrame(request: Extract<RuntimeRequest, { type: "VID
 
 export async function openVideoInTab(tabId: number | undefined): Promise<unknown> {
   if (!Number.isInteger(tabId)) throw new Error("没有活动视频页面。");
+  if (!normalizeVideoTranslation((await getSettings()).videoTranslation).enabled) throw new Error("视频字幕已关闭，请先在扩展弹窗中开启。");
   const candidates = [...frames.values()].filter(frame => frame.tab === tabId && Date.now() - frame.seen < 15_000)
     .sort((a, b) => videoPriority(b.area, b.playing) - videoPriority(a.area, a.playing));
   const ids = [...new Set([...candidates.map(frame => frame.frame), 0])];
@@ -45,7 +56,9 @@ export async function translateVideo(request: Extract<RuntimeRequest, { type: "T
   const controller = new AbortController(); requests.set(key, controller);
   try {
     const settings = await getSettings();
+    if (!normalizeVideoTranslation(settings.videoTranslation).enabled) throw new Error("视频字幕已关闭。");
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    signal.throwIfAborted();
     return await translateWithSettings(settings, { texts: request.texts, sourceLang: request.sourceLang, targetLang: request.targetLang, providerId: request.providerId },
       { signal, priority: true, persistentCache: false });
   } finally { requests.delete(key); }

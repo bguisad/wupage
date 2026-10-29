@@ -4,9 +4,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { browserTarget, verifyBrowserIdentity } from './lib/browser-target.mjs';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const output = path.join(root, '.npm-cache/video-subtitles');
+const target = browserTarget();
+const output = path.join(root, '.npm-cache/video-subtitles', target.kind);
 await fs.mkdir(output, { recursive: true });
 const moduleName = process.env.PLAYWRIGHT_MODULE || 'playwright';
 const { chromium } = await import(path.isAbsolute(moduleName) ? pathToFileURL(moduleName).href : moduleName);
@@ -39,7 +41,7 @@ const origin = 'http://127.0.0.1:' + server.address().port;
 let context;
 try {
   context = await chromium.launchPersistentContext(path.join(output, 'profile-' + Date.now()), {
-    ...(process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : { channel: 'chromium' }),
+    ...(process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : target.chromiumOptions),
     headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging'], viewport: { width: 1240, height: 800 }
   });
   const session = await context.browser().newBrowserCDPSession();
@@ -57,6 +59,7 @@ try {
     await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
   }, origin);
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000);
+  const identity = verifyBrowserIdentity(target, await page.evaluate(() => navigator.userAgent));
   await page.goto(origin); await page.waitForFunction(() => window.fixtureReady);
   await page.waitForFunction(() => document.querySelector('video').textTracks[0]?.cues?.length === 3);
   const view = page.locator('[data-wupage-video]').first();
@@ -64,10 +67,29 @@ try {
   const tab = await worker.evaluate(async url => (await chrome.tabs.query({ url }))[0], page.url());
   const popup = await context.newPage();
   await popup.addInitScript(tab => { chrome.tabs.query = async () => [tab]; window.close = () => {}; }, tab);
-  await popup.goto(extension + '/popup.html'); await popup.locator('#openVideoSubtitles:enabled').waitFor();
+  await popup.goto(extension + '/popup.html'); await popup.locator('#videoTranslation:enabled').waitFor();
   await popup.setViewportSize({ width: 360, height: 700 });
+  const videoToggle = popup.locator('#videoTranslation');
+  assert.equal(await videoToggle.getAttribute('aria-pressed'), 'true');
+  await videoToggle.click(); await view.waitFor({ state: 'detached' });
+  await popup.waitForFunction(() => document.querySelector('#videoTranslation').getAttribute('aria-pressed') === 'false');
+  await popup.screenshot({ path: path.join(output, 'disabled.png') });
+  await videoToggle.click(); await view.waitFor();
+  await popup.waitForFunction(() => document.querySelector('#videoTranslation').getAttribute('aria-pressed') === 'true');
+  for (const width of [264, 330, 360]) {
+    await popup.setViewportSize({ width, height: 760 });
+    assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const layout = await popup.evaluate(() => {
+      const video = document.querySelector('#videoTranslation'), features = document.querySelector('.feature-toggles');
+      return { grouped: features.contains(video), width: video.getBoundingClientRect().width, groupWidth: features.getBoundingClientRect().width,
+        beforeActions: video.getBoundingClientRect().bottom <= document.querySelector('.translation-actions').getBoundingClientRect().top,
+        pdfAlone: document.querySelector('#openPdfWorkspace').parentElement.children.length === 1 };
+    });
+    assert.ok(layout.grouped && layout.beforeActions && layout.pdfAlone && Math.abs(layout.width - layout.groupWidth) < 1);
+    await popup.screenshot({ path: path.join(output, `popup-${width}.png`) });
+  }
   await popup.screenshot({ path: path.join(output, 'entry.png') });
-  await popup.locator('#openVideoSubtitles').click();
+  await view.locator('.toggle').evaluate(button => button.click());
   await page.waitForFunction(() => document.querySelector('[data-wupage-video]')?.hasAttribute('data-enabled'));
   await popup.close(); await page.bringToFront();
   const translated = view.locator('.translation span');
@@ -75,7 +97,7 @@ try {
   assert.equal(await view.locator('.panel').isVisible(), false, 'one click starts without an obstructing panel');
   assert.equal(await page.evaluate(() => document.querySelector('video').textTracks[0].mode), 'hidden');
   assert.deepEqual(requests.flatMap(request => request.texts), [...translations.keys()].slice(0,3));
-  checks.push('one-click popup activation; native WebVTT; lookahead; compact controls');
+  checks.push('persistent feature toggle, full-width placement in the feature grid, three popup widths; native WebVTT and compact player controls');
   const caption = await view.locator('.captions').boundingBox(); const video = await page.locator('video').boundingBox();
   assert.ok(caption.x >= video.x && caption.x + caption.width <= video.x + video.width);
   assert.ok(caption.y >= video.y && caption.y + caption.height <= video.y + video.height);
@@ -170,10 +192,27 @@ try {
   assert.equal(result.ok,true);
   await frame.locator('[data-wupage-video] .translation span').filter({ hasText: '你好，世界。' }).waitFor();
   checks.push('cross-origin iframe discovery and popup frame routing');
+  const beforeDisable = requests.length;
+  await options.evaluate(async () => {
+    const { data: settings } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    settings.videoTranslation = { ...settings.videoTranslation, enabled: false };
+    await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
+  });
+  await page.locator('[data-wupage-video]').waitFor({ state: 'detached' });
+  await frame.locator('[data-wupage-video]').waitFor({ state: 'detached' });
+  assert.equal(await frame.locator('video').evaluate(video => video.textTracks[0].mode), 'showing');
+  await page.waitForTimeout(300); assert.equal(requests.length, beforeDisable);
+  await options.evaluate(async () => {
+    const { data: settings } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    settings.videoTranslation.enabled = true; await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
+  });
+  await page.locator('[data-wupage-video]').waitFor(); await frame.locator('[data-wupage-video]').waitFor();
+  assert.equal(await frame.locator('[data-wupage-video]').getAttribute('data-enabled'), null);
+  checks.push('disabling removes top/embedded controls and active subtitles and restores the native track; enabling restores idle controls');
   await embedded.close();
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: true, checks, requests: requests.length }));
-  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ passed: true, checks, requests, errors }, null, 2));
+  console.log(JSON.stringify({ ...identity, passed: true, checks, requests: requests.length }));
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ ...identity, passed: true, checks, requests, errors }, null, 2));
 } catch (error) {
   const states=[];
   for (const page of context?.pages() ?? []) {

@@ -16,6 +16,7 @@ import { doubaoProviderNotice, isDoubaoProviderUnavailable, syncDoubaoTargetCont
 import { renderUiIcons, uiIconMarkup } from "../shared/ui-icons";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
 import { observeParagraphMode } from "../shared/paragraph-mode";
+import { normalizeVideoTranslation } from "../shared/video";
 
 renderUiIcons();
 
@@ -26,7 +27,7 @@ const translationDisplayMode = query<HTMLSelectElement>("#translationDisplayMode
 const status = query<HTMLParagraphElement>("#status");
 const pageToggleButton = query<HTMLButtonElement>("#pageToggle");
 const openPdfWorkspaceButton = query<HTMLButtonElement>("#openPdfWorkspace");
-const videoSubtitlesButton = query<HTMLButtonElement>("#openVideoSubtitles");
+const videoTranslationButton = query<HTMLButtonElement>("#videoTranslation");
 const fileAccessHelp = query<HTMLDivElement>("#fileAccessHelp");
 const openFileAccessSettingsButton = query<HTMLButtonElement>("#openFileAccessSettings");
 const paragraphModeButton = query<HTMLButtonElement>("#paragraphMode");
@@ -158,19 +159,8 @@ async function init(): Promise<void> {
   sourceLang.addEventListener("change", saveSelection);
   provider.addEventListener("change", saveSelection);
   pageToggleButton.addEventListener("click", togglePageTranslation);
-  videoSubtitlesButton.addEventListener("click", async () => {
-    videoSubtitlesButton.disabled = true;
-    try {
-      await savePopupSettings();
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) throw new Error("没有活动标签页。");
-      await sendRuntimeMessage({ type: "OPEN_VIDEO_SUBTITLES", tabId: tab.id });
-      window.close();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-      updatePageActionAvailability();
-    }
-  });
+  videoTranslationButton.addEventListener("click", toggleVideoTranslation);
+  videoTranslationButton.disabled = false;
   translationDisplayMode.addEventListener("change", saveSelection);
   paragraphModeButton.addEventListener("click", toggleParagraphMode);
   contextMenuTranslationButton.addEventListener("click", toggleContextMenuTranslation);
@@ -262,6 +252,7 @@ function applyPopupSettings(incoming: ExtensionSettings): void {
   }
   if (translationDisplayMode.value !== settings.translationDisplayMode) translationDisplayMode.value = settings.translationDisplayMode;
   if (paragraphModeButton.getAttribute("aria-busy") !== "true") updateParagraphModeButton();
+  if (videoTranslationButton.getAttribute("aria-busy") !== "true") updateVideoTranslationButton();
   if (contextMenuTranslationButton.getAttribute("aria-busy") !== "true") updateContextMenuTranslationButton();
   if (autoTranslationButton.getAttribute("aria-busy") !== "true") updateAutoTranslationButton();
   if (selectionTranslationButton.getAttribute("aria-busy") !== "true") updateSelectionTranslationButton();
@@ -676,6 +667,25 @@ async function clearCache(): Promise<void> {
   }
 }
 
+function updateVideoTranslationButton(): void {
+  const value = String(normalizeVideoTranslation(settings.videoTranslation).enabled);
+  if (videoTranslationButton.getAttribute("aria-pressed") !== value) videoTranslationButton.setAttribute("aria-pressed", value);
+  videoTranslationButton.removeAttribute("data-loading");
+}
+
+async function toggleVideoTranslation(): Promise<void> {
+  const enabled = !normalizeVideoTranslation(settings.videoTranslation).enabled;
+  setButtonBusy(videoTranslationButton, true);
+  try {
+    await updatePopupSettings(latest => ({ videoTranslation: { ...normalizeVideoTranslation(latest.videoTranslation), enabled } }));
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    updateVideoTranslationButton();
+    setButtonBusy(videoTranslationButton, false);
+  }
+}
+
 function updateParagraphModeButton(): void {
   const value = String(paragraphMode);
   if (paragraphModeButton.getAttribute("aria-pressed") !== value) paragraphModeButton.setAttribute("aria-pressed", value);
@@ -696,7 +706,6 @@ function updateFloatingBallButton(): void {
 
 function updatePageActionAvailability(): void {
   pageToggleButton.disabled = !pageTranslationAvailable;
-  videoSubtitlesButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
   paragraphModeButton.disabled = !paragraphModeAvailable;
   debugButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
 }

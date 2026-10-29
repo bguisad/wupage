@@ -70,6 +70,17 @@ try{
  await select(reading);await firefox.command('WebDriver:SwitchToFrame',{id:frame.value});
  await wait(translation,text=>text==='你好，世界。','embedded bilingual subtitle');
  checks.push('Firefox lazy video module and popup routing in a cross-origin iframe');
+ const beforeDisable=requests.length;
+ await api(`const {data:settings}=await chrome.runtime.sendMessage({type:'GET_SETTINGS'});settings.videoTranslation={...settings.videoTranslation,enabled:false};return chrome.runtime.sendMessage({type:'SAVE_SETTINGS',settings});`);
+ await select(reading);await firefox.command('WebDriver:SwitchToFrame',{id:frame.value});
+ await wait(()=>firefox.execute('return document.querySelectorAll("[data-wupage-video]").length;'),value=>value===0,'disabled embedded controls');
+ assert.equal(await firefox.execute('return document.querySelector("video").textTracks[0].mode;'),'showing');
+ await delay(300);assert.equal(requests.length,beforeDisable);
+ await api(`const {data:settings}=await chrome.runtime.sendMessage({type:'GET_SETTINGS'});settings.videoTranslation.enabled=true;return chrome.runtime.sendMessage({type:'SAVE_SETTINGS',settings});`);
+ await select(reading);await firefox.command('WebDriver:SwitchToFrame',{id:frame.value});
+ await wait(()=>firefox.execute('return !!document.querySelector("[data-wupage-video]");'),Boolean,'re-enabled embedded controls');
+ assert.equal(await firefox.execute('return document.querySelector("[data-wupage-video]").hasAttribute("data-enabled");'),false);
+ checks.push('global disable removes active embedded subtitles and restores the native track; re-enable restores idle controls');
  await firefox.command('WebDriver:SwitchToFrame',{id:null});
  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({passed:true,version:firefox.session.capabilities.browserVersion,checks,requests},null,2));
  console.log(JSON.stringify({passed:true,version:firefox.session.capabilities.browserVersion,checks}));

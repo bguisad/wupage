@@ -102,7 +102,7 @@ export class PlayerSubtitleController {
     void this.settingsSnapshot.read().then(settings => {
       if (this.disposed) return;
       this.applySettings(settings);
-      if (!this.enabled && this.autoStart && this.preferences.enabledSites.includes(this.site) && (window === window.top || !this.video.paused)) void this.start();
+      if (this.preferences.enabled && !this.enabled && this.autoStart && this.preferences.enabledSites.includes(this.site) && (window === window.top || !this.video.paused)) void this.start();
     }).catch(() => undefined);
   }
 
@@ -139,6 +139,7 @@ export class PlayerSubtitleController {
       const settings = await this.settingsSnapshot.read();
       if (!this.valid(epoch)) return;
       this.applySettings(settings);
+      if (!this.preferences.enabled) { this.stop(); return; }
       const provider = settings.providers.find(entry => entry.id === settings.activeProviderId);
       if (!provider || provider.enabled === false) throw new Error("请先选择可用的翻译服务。");
       this.clock = setInterval(() => this.tick(), 120);
@@ -389,6 +390,7 @@ export class PlayerSubtitleController {
   private save(patch: Partial<ExtensionSettings>, preferences?: Partial<VideoTranslationSettings>): void {
     this.saveQueue = this.saveQueue.catch(() => undefined).then(async () => {
       const latest = await this.settingsSnapshot.read();
+      if (this.disposed) return;
       const videoSettings = normalizeVideoTranslation(latest.videoTranslation);
       const settings = { ...latest, ...patch,
         ...(preferences ? { videoTranslation: { ...videoSettings, ...preferences, ...(preferences.enabledSites ? {
