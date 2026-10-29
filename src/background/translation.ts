@@ -21,10 +21,19 @@ let nextDebugTaskId = 1;
 const MAX_DEBUG_TASKS = 100;
 const MAX_LLM_BATCH_ITEMS = 16;
 
+export interface TranslationTaskOptions {
+  signal?: AbortSignal;
+  priority?: boolean;
+  persistentCache?: boolean;
+}
+
 export async function translateWithSettings(
   settings: ExtensionSettings,
-  request: TranslateBatchRequest
+  request: TranslateBatchRequest,
+  options: TranslationTaskOptions = {}
 ): Promise<TranslateBatchResponse> {
+  options.signal?.throwIfAborted();
+  const useCache = settings.cacheEnabled && options.persistentCache !== false;
   const providerId = request.providerId ?? settings.activeProviderId;
   const providerConfig = settings.providers.find((provider) => provider.id === providerId);
   if (!providerConfig) throw new Error(`Provider not found: ${providerId}`);
@@ -33,7 +42,7 @@ export async function translateWithSettings(
   const provider = createProvider(providerConfig);
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
-  const cacheProviderId = settings.cacheEnabled
+  const cacheProviderId = useCache
     ? `${providerId}.${await sha256(JSON.stringify({ version: 4, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
       ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
@@ -43,7 +52,8 @@ export async function translateWithSettings(
   const uncachedIndexes: number[] = [];
 
   for (const [index, text] of request.texts.entries()) {
-    const stored = settings.cacheEnabled
+    options.signal?.throwIfAborted();
+    const stored = useCache
       ? await readCachedTranslation(cacheProviderId, request.targetLang, text, request.context)
       : undefined;
     const cached = stored !== undefined && request.preservePlaceholders
@@ -59,10 +69,10 @@ export async function translateWithSettings(
 
   const runProviderTexts = (texts: string[]) =>
     runProviderTask(providerConfig, request, texts, performance, settings.concurrency, async () => {
-      const result = await translateProviderTexts(providerConfig, provider, request, texts);
+      const result = await translateProviderTexts(providerConfig, provider, request, texts, options.signal);
       assertTranslationResponse(result, texts.length);
       return result;
-    });
+    }, options);
   const translated = await runBatches(
     uncachedTexts,
     performance.chunkSize,
@@ -72,12 +82,13 @@ export async function translateWithSettings(
   );
 
   const output = Array<string>(request.texts.length);
+  options.signal?.throwIfAborted();
   for (const [index, value] of cachedTranslations) output[index] = value;
 
   for (const [translatedIndex, sourceIndex] of uncachedIndexes.entries()) {
     const translation = translated[translatedIndex];
     output[sourceIndex] = translation;
-    if (settings.cacheEnabled) {
+    if (useCache) {
       await writeCachedTranslation(
         cacheProviderId,
         request.targetLang,
@@ -119,20 +130,18 @@ async function runProviderTask(
   texts: string[],
   performance: ReturnType<typeof getEffectiveProviderPerformance>,
   globalConcurrency: number,
-  task: () => Promise<string[]>
+  task: () => Promise<string[]>,
+  options: TranslationTaskOptions = {}
 ): Promise<string[]> {
   const debugTask = createDebugTask(providerConfig, request, texts, performance);
-  const release = await acquireTaskSlots(
-    providerConfig.id,
-    performance.concurrency,
-    globalConcurrency,
-    debugTask
-  );
-
-  debugTask.status = "running";
-  debugTask.startedAt = Date.now();
+  let release: (() => void) | undefined;
   try {
+    release = await acquireTaskSlots(providerConfig.id, performance.concurrency, globalConcurrency, debugTask, options);
+    options.signal?.throwIfAborted();
+    debugTask.status = "running";
+    debugTask.startedAt = Date.now();
     const result = await task();
+    options.signal?.throwIfAborted();
     debugTask.status = "succeeded";
     debugTask.finishedAt = Date.now();
     debugTask.translatedTexts = result;
@@ -143,7 +152,7 @@ async function runProviderTask(
     debugTask.error = error instanceof Error ? error.message : String(error);
     throw error;
   } finally {
-    release();
+    release?.();
   }
 }
 
@@ -183,8 +192,10 @@ function truncateDebugText(text: string): string {
 async function acquireProviderSlot(
   key: string,
   maxConcurrency: number,
-  debugTask: TranslationDebugTask
+  debugTask: TranslationDebugTask,
+  options: TranslationTaskOptions = {}
 ): Promise<() => void> {
+  options.signal?.throwIfAborted();
   const limiter = getProviderLimiter(key);
   limiter.maxConcurrency = maxConcurrency;
   if (limiter.active < limiter.maxConcurrency) {
@@ -193,11 +204,19 @@ async function acquireProviderSlot(
   }
 
   debugTask.status = "queued";
-  return new Promise((resolve) => {
-    limiter.queue.push(() => {
+  return new Promise((resolve, reject) => {
+    const queued = () => {
+      options.signal?.removeEventListener("abort", abort);
       limiter.active += 1;
       resolve(() => releaseProviderSlot(limiter));
-    });
+    };
+    const abort = () => {
+      const index = limiter.queue.indexOf(queued);
+      if (index >= 0) limiter.queue.splice(index, 1);
+      reject(options.signal?.reason ?? new DOMException("字幕任务已取消。", "AbortError"));
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.priority) limiter.queue.unshift(queued); else limiter.queue.push(queued);
   });
 }
 
@@ -205,18 +224,21 @@ async function acquireTaskSlots(
   providerId: string,
   providerConcurrency: number,
   globalConcurrency: number,
-  debugTask: TranslationDebugTask
+  debugTask: TranslationDebugTask,
+  options: TranslationTaskOptions = {}
 ): Promise<() => void> {
   const releaseProvider = await acquireProviderSlot(
     providerId,
     Math.max(1, providerConcurrency),
-    debugTask
+    debugTask,
+    options
   );
   try {
     const releaseGlobal = await acquireProviderSlot(
       "__wupage_global__",
       Math.max(1, globalConcurrency),
-      debugTask
+      debugTask,
+      options
     );
     return () => {
       releaseGlobal();
@@ -325,22 +347,24 @@ async function translateProviderTexts(
   providerConfig: ProviderConfig,
   provider: ReturnType<typeof createProvider>,
   request: TranslateBatchRequest,
-  texts: string[]
+  texts: string[],
+  signal?: AbortSignal
 ): Promise<string[]> {
+  signal?.throwIfAborted();
   if (request.preservePlaceholders) {
     return translateProtectedText({ ...request, texts }, (part) =>
-      translateProviderTexts(providerConfig, provider, { ...part, preservePlaceholders: false }, part.texts)
+      translateProviderTexts(providerConfig, provider, { ...part, preservePlaceholders: false }, part.texts, signal)
     );
   }
   if (providerConfig.type === "firefox-local" || isLlmProvider(providerConfig) || !request.context || !texts.length) {
-    return provider.translateBatch({ ...request, texts });
+    return provider.translateBatch({ ...request, texts }, signal);
   }
 
   const contextualSource = buildContextualSource(request.context, texts);
   const contextualResult = await provider.translateBatch({
     ...request,
     texts: [contextualSource]
-  });
+  }, signal);
   const translations = contextualResult.length === 1
     ? parseContextualTranslation(contextualResult[0], texts.length)
     : null;
@@ -351,7 +375,7 @@ async function translateProviderTexts(
     if (!request.sourceLang || request.sourceLang === "auto") {
       const unchanged = texts.flatMap((text, index) => translations[index].trim() === text.trim() ? [index] : []);
       if (unchanged.length) {
-        const retried = await provider.translateBatch({ ...request, texts: unchanged.map(index => texts[index]) });
+        const retried = await provider.translateBatch({ ...request, texts: unchanged.map(index => texts[index]) }, signal);
         assertTranslationResponse(retried, unchanged.length);
         unchanged.forEach((index, position) => { translations[index] = retried[position]; });
       }
@@ -361,7 +385,7 @@ async function translateProviderTexts(
 
   // Some machine-translation endpoints rewrite unusual delimiters. Fall back
   // to their ordinary batch mode rather than failing the whole page.
-  return provider.translateBatch({ ...request, texts });
+  return provider.translateBatch({ ...request, texts }, signal);
 }
 
 function buildContextualSource(context: string, texts: string[]): string {

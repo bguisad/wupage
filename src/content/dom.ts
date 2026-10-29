@@ -9,6 +9,7 @@ import type { TranslationDisplayMode } from "../shared/types";
 import { readImageTextLayout } from "./image-text-layout";
 import { normalizeProtectedText } from "../shared/protected-text";
 import { isDivProseBlock, READABLE_ROOT_SELECTOR } from "./readable-content";
+import { videoPlatform } from "../video/platforms";
 
 export interface TextSegment {
   id: string;
@@ -85,6 +86,10 @@ const SKIP_TAGS = new Set([
   "CANVAS"
 ]);
 const SKIP_SELECTORS = [
+  "[data-wupage-video]",
+  "[data-wupage-video-native]",
+  "#wupage-video-panel",
+  "#wupage-video-overlay",
   "#wupage-selection-tools",
   "#wupage-floating-hitbox",
   "#wupage-floating-menu",
@@ -1336,6 +1341,7 @@ function shouldSkipElement(
   visibility?: RenderVisibilitySnapshot
 ): boolean {
   if (element.closest(`.${TRANSLATION_CLASS}`)) return true;
+  if (element.closest(videoPlatform()?.captions ?? ".vjs-text-track-display,.plyr__captions,.jw-captions")) return true;
   if (element.closest(REDDIT_METADATA_SELECTOR)) return true;
   if (isInsideCodeBlock(element)) return false;
   if (isCompactControlText(element)) {

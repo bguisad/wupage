@@ -20,6 +20,7 @@ import { setupAppearance } from "../shared/appearance-runtime";
 import { initParagraphContextTranslation } from "./paragraph-context";
 import { executeTranslationShortcut } from "./shortcuts";
 import { initKeyboardShortcuts } from "./keyboard-shortcuts";
+import { initVideoSubtitles, openVideoSubtitles } from "./video-subtitles";
 
 const translateContextParagraph = initParagraphContextTranslation(refreshTranslationState);
 
@@ -52,6 +53,7 @@ initImageTranslation();
 initAutoTranslation();
 initSelectionTranslation();
 initKeyboardShortcuts(executeTranslationShortcut);
+initVideoSubtitles();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   const change = changes[SETTINGS_KEY];
@@ -65,6 +67,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 async function handleMessage(request: RuntimeRequest): Promise<unknown> {
+  if (request.type === "OPEN_VIDEO_SUBTITLES") {
+    return openVideoSubtitles();
+  }
   if (request.type === "EXECUTE_TRANSLATION_SHORTCUT") {
     await executeTranslationShortcut(request.command);
     return { handled: true };

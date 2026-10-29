@@ -24,6 +24,11 @@ const MAX_LLM_BATCH_ITEMS = 16;
 const VIEWPORT_DEBOUNCE_MS = 100;
 const DYNAMIC_CONTENT_DEBOUNCE_MS = 160;
 const EXTENSION_OWNED_SELECTOR = [
+  "[data-wupage-video]",
+  "[data-wupage-video-style]",
+  "[data-wupage-video-native]",
+  "#wupage-video-panel",
+  "#wupage-video-overlay",
   ".wupage-translation",
   "#wupage-floating-hitbox",
   "#wupage-floating-menu",
