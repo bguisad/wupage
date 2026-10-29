@@ -14,6 +14,9 @@ import { normalizeProtectedText } from "../shared/protected-text";
 import { translateProtectedText } from "./protected-translation";
 import { assertTranslationResponse, TranslationResponseError } from "./translation-response";
 import { LOCAL_MODELS } from "../local/models";
+import { DOUBAO_PROTOCOL_VERSION } from "../shared/doubao";
+import { withDoubaoDeadline } from "./doubao";
+import { detectSourceLanguage } from "./source-language";
 
 const providerLimiters = new Map<string, ProviderLimiter>();
 const debugTasks: TranslationDebugTask[] = [];
@@ -33,18 +36,42 @@ export async function translateWithSettings(
   options: TranslationTaskOptions = {}
 ): Promise<TranslateBatchResponse> {
   options.signal?.throwIfAborted();
-  const useCache = settings.cacheEnabled && options.persistentCache !== false;
   const providerId = request.providerId ?? settings.activeProviderId;
   const providerConfig = settings.providers.find((provider) => provider.id === providerId);
   if (!providerConfig) throw new Error(`Provider not found: ${providerId}`);
   if (providerConfig.enabled === false) throw new Error(`Provider is disabled: ${providerId}`);
 
+  if (providerConfig.type === "doubao-web") {
+    return withDoubaoDeadline(async (signal) => {
+      let sourceLang = request.sourceLang ?? "auto";
+      if (sourceLang === "auto" && request.texts.length) {
+        const detected = await detectSourceLanguage(request.texts, signal);
+        if (!detected) throw new Error("无法可靠识别源语言，请在翻译设置中手动选择源语言。");
+        sourceLang = detected;
+      }
+      return translateConfigured(settings, { ...request, sourceLang, context: undefined }, providerConfig, { ...options, signal });
+    }, options.signal);
+  }
+  return translateConfigured(settings, request, providerConfig, options);
+}
+
+async function translateConfigured(
+  settings: ExtensionSettings,
+  request: TranslateBatchRequest,
+  providerConfig: ProviderConfig,
+  options: TranslationTaskOptions = {}
+): Promise<TranslateBatchResponse> {
+  const { signal } = options;
+  signal?.throwIfAborted();
+  const useCache = settings.cacheEnabled && options.persistentCache !== false;
+  const providerId = providerConfig.id;
   const provider = createProvider(providerConfig);
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
   const cacheProviderId = useCache
     ? `${providerId}.${await sha256(JSON.stringify({ version: 4, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
       ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
+      ...(providerConfig.type === "doubao-web" ? { doubaoProtocolVersion: DOUBAO_PROTOCOL_VERSION, translateService: "1" } : {}),
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
     : providerId;
   const cachedTranslations = new Map<number, string>();
@@ -52,7 +79,7 @@ export async function translateWithSettings(
   const uncachedIndexes: number[] = [];
 
   for (const [index, text] of request.texts.entries()) {
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     const stored = useCache
       ? await readCachedTranslation(cacheProviderId, request.targetLang, text, request.context)
       : undefined;
@@ -69,23 +96,25 @@ export async function translateWithSettings(
 
   const runProviderTexts = (texts: string[]) =>
     runProviderTask(providerConfig, request, texts, performance, settings.concurrency, async () => {
-      const result = await translateProviderTexts(providerConfig, provider, request, texts, options.signal);
+      const result = await translateProviderTexts(providerConfig, provider, request, texts, signal);
+      signal?.throwIfAborted();
       assertTranslationResponse(result, texts.length);
       return result;
     }, options);
   const translated = await runBatches(
     uncachedTexts,
     performance.chunkSize,
-    isLlmProvider(providerConfig) ? MAX_LLM_BATCH_ITEMS : Number.POSITIVE_INFINITY,
+    providerConfig.type === "doubao-web" ? 10 : isLlmProvider(providerConfig) ? MAX_LLM_BATCH_ITEMS : Number.POSITIVE_INFINITY,
     performance.concurrency,
     (texts) => translateProviderBatchWithRecovery(providerConfig, texts, runProviderTexts)
   );
 
   const output = Array<string>(request.texts.length);
-  options.signal?.throwIfAborted();
+  signal?.throwIfAborted();
   for (const [index, value] of cachedTranslations) output[index] = value;
 
   for (const [translatedIndex, sourceIndex] of uncachedIndexes.entries()) {
+    signal?.throwIfAborted();
     const translation = translated[translatedIndex];
     output[sourceIndex] = translation;
     if (useCache) {
@@ -99,6 +128,7 @@ export async function translateWithSettings(
     }
   }
 
+  signal?.throwIfAborted();
   return {
     translations: output,
     cached: cachedTranslations.size
@@ -351,20 +381,23 @@ async function translateProviderTexts(
   signal?: AbortSignal
 ): Promise<string[]> {
   signal?.throwIfAborted();
+  const translate = (part: TranslateBatchRequest) => signal
+    ? provider.translateBatch(part, signal)
+    : provider.translateBatch(part);
   if (request.preservePlaceholders) {
     return translateProtectedText({ ...request, texts }, (part) =>
       translateProviderTexts(providerConfig, provider, { ...part, preservePlaceholders: false }, part.texts, signal)
     );
   }
-  if (providerConfig.type === "firefox-local" || isLlmProvider(providerConfig) || !request.context || !texts.length) {
-    return provider.translateBatch({ ...request, texts }, signal);
+  if (providerConfig.type === "doubao-web" || providerConfig.type === "firefox-local" || isLlmProvider(providerConfig) || !request.context || !texts.length) {
+    return translate({ ...request, texts });
   }
 
   const contextualSource = buildContextualSource(request.context, texts);
-  const contextualResult = await provider.translateBatch({
+  const contextualResult = await translate({
     ...request,
     texts: [contextualSource]
-  }, signal);
+  });
   const translations = contextualResult.length === 1
     ? parseContextualTranslation(contextualResult[0], texts.length)
     : null;
@@ -375,7 +408,7 @@ async function translateProviderTexts(
     if (!request.sourceLang || request.sourceLang === "auto") {
       const unchanged = texts.flatMap((text, index) => translations[index].trim() === text.trim() ? [index] : []);
       if (unchanged.length) {
-        const retried = await provider.translateBatch({ ...request, texts: unchanged.map(index => texts[index]) }, signal);
+        const retried = await translate({ ...request, texts: unchanged.map(index => texts[index]) });
         assertTranslationResponse(retried, unchanged.length);
         unchanged.forEach((index, position) => { translations[index] = retried[position]; });
       }
@@ -385,7 +418,7 @@ async function translateProviderTexts(
 
   // Some machine-translation endpoints rewrite unusual delimiters. Fall back
   // to their ordinary batch mode rather than failing the whole page.
-  return provider.translateBatch({ ...request, texts }, signal);
+  return translate({ ...request, texts });
 }
 
 function buildContextualSource(context: string, texts: string[]): string {

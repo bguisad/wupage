@@ -4,6 +4,7 @@ import type { VideoTranslationSettings } from "./video";
 import type { ShortcutEnabledSettings, ShortcutSettings, TranslationShortcut } from "./shortcuts";
 
 export type ProviderType =
+  | "doubao-web"
   | "firefox-local"
   | "microsoft-web-translate"
   | "google-web-translate"
@@ -69,6 +70,21 @@ export interface VolcengineWebTranslateConfig extends DualServiceConfig {
 
 export interface MyMemoryConfig extends DualServiceConfig {
   type: "mymemory";
+}
+
+export interface DoubaoWebConfig extends ProviderBaseConfig {
+  type: "doubao-web";
+}
+
+export type DoubaoStatusState = "unknown" | "checking" | "ready" | "login-required"
+  | "rate-limited" | "service-rejected" | "permission-required" | "network-error"
+  | "timeout" | "protocol-changed" | "incomplete" | "unsupported-browser" | "unsupported-language";
+
+export interface DoubaoStatus {
+  state: DoubaoStatusState;
+  checkedAt?: number;
+  message?: string;
+  retryAt?: number;
 }
 
 export interface FirefoxLocalConfig extends ProviderBaseConfig {
@@ -143,6 +159,7 @@ export interface HttpTemplateConfig extends ProviderBaseConfig {
 }
 
 export type ProviderConfig =
+  | DoubaoWebConfig
   | FirefoxLocalConfig
   | MicrosoftWebTranslateConfig
   | GoogleWebTranslateConfig
@@ -288,6 +305,8 @@ export type RuntimeRequest =
   | { type: "LOOKUP_DICTIONARY"; query: string; provider: DictionaryProvider }
   | { type: "PLAY_DICTIONARY_AUDIO"; provider: DictionaryProvider; url: string }
   | { type: "STOP_DICTIONARY_AUDIO" }
+  | { type: "GET_DOUBAO_STATUS" }
+  | { type: "CHECK_DOUBAO" }
   | { type: "GET_LOCAL_MODEL_STATUS" }
   | { type: "INSTALL_LOCAL_MODEL"; modelId: string }
   | { type: "CANCEL_LOCAL_MODEL_DOWNLOAD" }
@@ -321,4 +340,4 @@ export type RuntimeRequest =
 
 export type RuntimeResponse =
   | { ok: true; data?: unknown }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorCode?: string; retryAfterMs?: number };

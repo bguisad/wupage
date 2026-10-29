@@ -12,6 +12,8 @@ import { enhanceProviderSelect } from "../shared/provider-picker";
 import { addAutoTranslationWebsite, currentWebsitePattern, excludeAutoTranslationWebsite, hasAutoTranslationWebsite, normalizeAutoTranslation, setAutoTranslationEnabled } from "../shared/auto-translation";
 import { normalizeSelectionTranslation } from "../shared/dictionary";
 import { setImageTranslationToggle, setupOcrControl } from "../shared/ocr-control-core";
+import { doubaoProviderNotice, isDoubaoProviderUnavailable, syncDoubaoTargetControls } from "../shared/doubao-ui";
+import { ProviderError } from "../shared/errors";
 import {
   findTranslatableParagraph,
   hasPageTranslations
@@ -19,6 +21,7 @@ import {
 import {
   hidePageTranslation,
   getPageTranslationState,
+  loadPageTranslationSettings,
   setPageTranslationDisplayMode,
   startPageTranslation,
   subscribePageTranslationState
@@ -77,6 +80,9 @@ let touchInteraction = false;
 let pageActionPending = false;
 let pageActionVersion = 0;
 let menuError: string | null = null;
+let menuErrorCode: string | undefined;
+let menuRetryAt: number | undefined;
+let retryStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let settingsSave: Promise<void> = Promise.resolve();
 let menuOcr: ReturnType<typeof setupOcrControl> | undefined;
 let unsubscribeTranslationState: (() => void) | undefined;
@@ -103,6 +109,9 @@ export function initFloatingBall(): void {
   activePointerId = undefined;
   dragging = movedDuringDrag = longPressTriggered = touchInteraction = false;
   menuError = null;
+  menuErrorCode = undefined;
+  menuRetryAt = undefined;
+  clearTimeout(retryStatusTimer);
   settingsSave = Promise.resolve();
   settingsSnapshot = createSettingsSnapshot(readSettings);
   menuOcr?.dispose();
@@ -236,7 +245,7 @@ async function translateActiveParagraph(): Promise<void> {
   if (!activeParagraph || translating) return;
   translating = true;
   const button = document.getElementById(FLOATING_ID);
-  button?.classList.add("is-loading");
+  button?.classList.add("wupage-is-loading");
 
   try {
     const target = activeParagraph;
@@ -420,6 +429,7 @@ function createMenu(): void {
     <div class="wupage-translation-feedback">
       <p data-role="translation-status" role="status" aria-live="polite" aria-atomic="true">点击悬浮球即可翻译全文</p>
       <button type="button" data-action="retranslate" hidden>重新翻译</button>
+      <button type="button" data-action="doubao-settings" hidden>豆包登录与检测</button>
     </div>
   `;
   const pointerMedia = window.matchMedia?.("(any-hover: none) and (any-pointer: coarse)");
@@ -459,7 +469,7 @@ function createMenu(): void {
     event.preventDefault();
 
     const action = target.dataset.action;
-    if (action === "settings") {
+    if (action === "settings" || action === "doubao-settings") {
       void sendRuntimeRequest({ type: "OPEN_OPTIONS_PAGE" }).catch(showMenuError);
       return;
     }
@@ -617,6 +627,7 @@ async function updateMenuState(menu: HTMLElement): Promise<void> {
 function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void {
   const automatic = menu.querySelector<HTMLButtonElement>("[data-action='auto-translation']");
   if (automatic) automatic.setAttribute("aria-pressed", String(settings.autoTranslation?.enabled === true));
+  menu.dataset.doubaoProvider = String(settings.providers.find((provider) => provider.id === settings.activeProviderId)?.type === "doubao-web");
   updateAutoTranslationSiteButton(menu, settings.autoTranslation);
   const contextMenu = menu.querySelector<HTMLButtonElement>("[data-action='context-menu-translation']");
   if (contextMenu) contextMenu.setAttribute("aria-pressed", String(settings.contextMenuTranslationEnabled === true));
@@ -626,7 +637,7 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
   void menuOcr?.refresh();
   menu.querySelector("[data-action='close']")?.setAttribute("aria-pressed", String(settings.floatingBallEnabled));
   let localNotice = menu.querySelector<HTMLElement>("[data-role='local-notice']");
-  const noticeText = localProviderNotice(settings);
+  const noticeText = localProviderNotice(settings) ?? doubaoProviderNotice(settings);
   if (!localNotice && noticeText) {
     localNotice = document.createElement("p");
     localNotice.dataset.role = "local-notice";
@@ -647,6 +658,7 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
     targetLangSelect.value = settings.targetLang;
     syncSelectValue(targetLangSelect);
   }
+  if (targetLangSelect) syncDoubaoTargetControls(settings, targetLangSelect);
   const providerSelect = menu.querySelector<HTMLSelectElement>("[data-role='provider']");
   if (providerSelect) {
     const providers = settings.providers.filter((provider) => provider.enabled !== false);
@@ -662,12 +674,17 @@ function applyMenuSettings(menu: HTMLElement, settings: ExtensionSettings): void
       delete providerSelect.dataset.options;
     }
     providerSelect.value = settings.activeProviderId;
+    for (const option of providerSelect.options) {
+      const config = providers.find((provider) => provider.id === option.value);
+      if (config) option.disabled = isDoubaoProviderUnavailable(config);
+    }
     enhanceProviderSelect(providerSelect, settings.providers);
   }
   const mode = menu.querySelector<HTMLSelectElement>("[data-role='display-mode']");
   if (mode) mode.value = paragraphMode ? "paragraph" : settings.translationDisplayMode;
   const button = document.getElementById(FLOATING_ID);
   if (button && !menu.hidden) positionMenu(menu, button, true);
+  refreshTranslationState();
 }
 
 function syncSelectValue(select: HTMLSelectElement): void {
@@ -836,7 +853,16 @@ interface FloatingPosition {
 async function togglePageTranslationFromFloating(force = false): Promise<void> {
   const state = getPageTranslationState();
   const busy = pageActionPending || state.pending > 0;
+  if ((force || (!busy && !state.active && !hasPageTranslations()))
+    && document.getElementById("wupage-floating-menu")?.dataset.doubaoProvider === "true"
+    && Math.max(menuRetryAt ?? 0, state.retryAt ?? 0) > Date.now()) {
+    refreshTranslationState();
+    revealMenu();
+    return;
+  }
   menuError = null;
+  menuErrorCode = undefined;
+  menuRetryAt = Math.max(menuRetryAt ?? 0, state.retryAt ?? 0) || undefined;
   if (!force && (busy || state.active || hasPageTranslations())) {
     pageActionVersion += 1;
     pageActionPending = false;
@@ -852,7 +878,7 @@ async function togglePageTranslationFromFloating(force = false): Promise<void> {
   try {
     await settingsSave;
     if (actionVersion !== pageActionVersion) return;
-    const settings = await getSettings();
+    const settings = await loadPageTranslationSettings();
     if (actionVersion !== pageActionVersion) return;
     const result = await startPageTranslation(settings, !force);
     if (actionVersion !== pageActionVersion) return;
@@ -868,6 +894,7 @@ async function togglePageTranslationFromFloating(force = false): Promise<void> {
 }
 
 export function refreshTranslationState(): void {
+  clearTimeout(retryStatusTimer);
   const state = getPageTranslationState();
   const busy = pageActionPending || state.pending > 0;
   const translated = hasPageTranslations();
@@ -875,7 +902,7 @@ export function refreshTranslationState(): void {
   // Incremental batches change progress, but the action remains restoring the original.
   const actionLabel = busy || translationEnabled ? "显示原文" : "翻译全文";
   const ball = document.getElementById(FLOATING_ID);
-  ball?.classList.toggle("is-loading", busy || translating);
+  ball?.classList.toggle("wupage-is-loading", busy || translating);
   ball?.setAttribute("aria-busy", String(busy));
   ball?.setAttribute("aria-disabled", "false");
   ball?.setAttribute("aria-label", actionLabel);
@@ -886,22 +913,30 @@ export function refreshTranslationState(): void {
 
   const menu = document.getElementById("wupage-floating-menu");
   if (!menu) return;
+  const errorCode = menuErrorCode ?? state.errorCode;
+  const retryAt = menu.dataset.doubaoProvider === "true" ? Math.max(menuRetryAt ?? 0, state.retryAt ?? 0) : 0;
+  const retrySeconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+  const recovery = menu.querySelector<HTMLButtonElement>("[data-action='doubao-settings']");
+  if (recovery) {
+    recovery.hidden = menu.dataset.doubaoProvider !== "true";
+    recovery.textContent = errorCode === "login-required" ? "去设置登录豆包并检测" : "豆包登录与检测";
+  }
   const pageToggle = menu.querySelector<HTMLButtonElement>("[data-action='page-toggle']");
   if (pageToggle) {
     if (pageToggle.textContent !== actionLabel) pageToggle.textContent = actionLabel;
-    pageToggle.disabled = false;
+    pageToggle.disabled = retrySeconds > 0 && !translationEnabled && !busy;
   }
   const retry = menu.querySelector<HTMLButtonElement>("[data-action='retranslate']");
   if (retry) {
     retry.hidden = !translationEnabled && state.failed === 0 && !menuError;
-    retry.disabled = busy;
-    const retryLabel = state.failed > 0 || menuError ? "重试翻译" : "重新翻译";
+    retry.disabled = busy || retrySeconds > 0;
+    const retryLabel = retrySeconds > 0 ? `等待 ${retrySeconds} 秒后重试` : state.failed > 0 || menuError ? "重试翻译" : "重新翻译";
     if (retry.textContent !== retryLabel) retry.textContent = retryLabel;
   }
   const status = menu.querySelector<HTMLElement>("[data-role='translation-status']");
   if (status) {
     status.dataset.tone = menuError || state.failed > 0 ? "error" : "normal";
-    const message = menuError
+    let message = menuError
       ?? (busy
         ? `正在翻译当前区域${state.translated ? `，已完成 ${state.translated} 段` : ""}，点击「原」可停止并恢复原文。`
         : state.failed > 0
@@ -913,8 +948,10 @@ export function refreshTranslationState(): void {
               : state.active
                 ? "当前区域暂无可翻译内容，滚动页面将继续翻译。"
                 : "点击悬浮球即可翻译全文。");
+    if (retrySeconds > 0) message += ` 请等待约 ${retrySeconds} 秒后再试。`;
     if (status.textContent !== message) status.textContent = message;
   }
+  if (!menu.hidden && retrySeconds > 0) retryStatusTimer = setTimeout(refreshTranslationState, Math.min(retryAt - Date.now() + 10, 1000));
   if (!menu.hidden && ball) positionMenu(menu, ball, true);
 }
 
@@ -925,8 +962,10 @@ function floatingBallTitle(action: string): string {
 
 function showMenuError(error: unknown): void {
   menuError = error instanceof Error ? error.message : String(error);
-  refreshTranslationState();
+  menuErrorCode = error instanceof ProviderError ? error.errorCode : undefined;
+  menuRetryAt = error instanceof ProviderError && error.retryAfterMs !== undefined ? Date.now() + error.retryAfterMs : undefined;
   revealMenu();
+  refreshTranslationState();
 }
 
 function revealMenu(): void {
@@ -1371,6 +1410,8 @@ function updateFloatingSettings(menu: HTMLElement, change: Partial<ExtensionSett
     }
     if (patch.translationDisplayMode) setPageTranslationDisplayMode(patch.translationDisplayMode);
     menuError = null;
+    menuErrorCode = undefined;
+    menuRetryAt = undefined;
     applyMenuSettings(menu, await getSettings());
     refreshTranslationState();
   });

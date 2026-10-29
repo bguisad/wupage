@@ -10,7 +10,13 @@ import {
   setParagraphMode
 } from "./floating";
 import { addRuntimeMessageListener, sendRuntimeRequest } from "./runtime";
-import { getPageTranslationState, hidePageTranslation, setPageTranslationDisplayMode, startPageTranslation } from "./page-translation";
+import {
+  getPageTranslationState,
+  hidePageTranslation,
+  loadPageTranslationSettings,
+  startPageTranslation,
+  updatePageTranslationSettings
+} from "./page-translation";
 import { injectContentStyles } from "./styles";
 import { initImageTranslation, translateContextImage } from "./image-translation";
 import { SETTINGS_KEY } from "../shared/defaults";
@@ -23,6 +29,8 @@ import { initKeyboardShortcuts } from "./keyboard-shortcuts";
 import { initVideoSubtitles, openVideoSubtitles } from "./video-subtitles";
 
 const translateContextParagraph = initParagraphContextTranslation(refreshTranslationState);
+
+let pageActionVersion = 0;
 
 addRuntimeMessageListener((request: RuntimeRequest, _sender, sendResponse) => {
   handleMessage(request)
@@ -58,12 +66,8 @@ initVideoSubtitles();
 chrome.storage.onChanged.addListener((changes, area) => {
   const change = changes[SETTINGS_KEY];
   if (area !== "local" || !change) return;
-  const { oldValue, newValue } = change;
-  const mode = (newValue as Partial<ExtensionSettings> | undefined)?.translationDisplayMode;
-  if ((oldValue as Partial<ExtensionSettings> | undefined)?.translationDisplayMode === mode) return;
-  if (mode === "replace" || mode === "bilingual" || mode === "bilingual-accent") {
-    setPageTranslationDisplayMode(mode);
-  }
+  const settings = change.newValue as ExtensionSettings | undefined;
+  if (settings) updatePageTranslationSettings(settings);
 });
 
 async function handleMessage(request: RuntimeRequest): Promise<unknown> {
@@ -79,6 +83,7 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
     return translateContextImage(request.srcUrl);
   }
   if (request.type === "CLEAR_TRANSLATION") {
+    pageActionVersion += 1;
     hidePageTranslation();
     return { cleared: true };
   }
@@ -114,8 +119,8 @@ async function handleMessage(request: RuntimeRequest): Promise<unknown> {
     return null;
   }
 
-  const settings = await sendRuntimeRequest<ExtensionSettings>({
-    type: "GET_SETTINGS"
-  } satisfies RuntimeRequest);
+  const actionVersion = ++pageActionVersion;
+  const settings = await loadPageTranslationSettings();
+  if (actionVersion !== pageActionVersion) return getPageTranslationState();
   return startPageTranslation(settings);
 }
