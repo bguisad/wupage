@@ -1,3 +1,8 @@
+html {
+  /* Keep the centered shell stable when switching between short and scrollable panels. */
+  scrollbar-gutter: stable both-edges;
+}
+
 body {
   margin: 0;
   font-family:
@@ -101,9 +106,7 @@ body {
 }
 
 .settings-actions {
-  position: sticky;
-  bottom: 16px;
-  z-index: 10;
+  position: static;
   margin-top: 16px;
   padding: 14px 18px;
   border: 1px solid var(--wp-border, #d7dedb);
@@ -172,7 +175,6 @@ body {
   }
 
   .settings-actions {
-    bottom: 8px;
     gap: 10px;
     padding: 12px;
   }
@@ -1039,7 +1041,6 @@ button.secondary {
 .shortcut-toolbar { min-width: 0; }
 .shortcut-toolbar .hint { font-size: 12px; }
 #shortcutStatus:empty, .shortcut-toolbar:has(#shortcutStatus:not(:empty)) #shortcutRecorderHelp { display: none; }
-.settings:has(#shortcutSettings:not([hidden])) .settings-actions { position: static; }
 .shortcut-list { margin: 0; border: 1px solid var(--wp-border, #d7dedb); border-radius: 6px; overflow: hidden; }
 .shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
 .shortcut-row + .shortcut-row { border-top: 1px solid var(--wp-border, #d7dedb); }
