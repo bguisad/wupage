@@ -112,9 +112,41 @@ describe("popup translation interactions", () => {
   it("keeps the original action when the active page has no completed segments", async () => {
     translate.mockResolvedValue({ translated: 0, cached: 0 });
     button().click();
-    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("已翻译 0 段"));
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("新内容加载后将自动翻译"));
     expect(button().textContent).toBe("显示全文");
     expect(button().disabled).toBe(false);
+  });
+
+  it("reports an interrupted translation without presenting zero segments as success", async () => {
+    translate.mockResolvedValue({ translated: 0, cached: 0, cancelled: true });
+    button().click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("本次翻译已取消"));
+    expect(button().textContent).toBe("翻译全文");
+  });
+
+  it("reports a running batch instead of claiming zero completed segments", async () => {
+    translate.mockResolvedValue({ translated: 0, cached: 0, pending: 2 });
+    button().click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("正在翻译当前区域"));
+    expect(button().textContent).toBe("显示全文");
+  });
+
+  it("does not let a cancelled action's delayed state read overwrite a newer restore", async () => {
+    const state = deferred();
+    vi.mocked(chrome.tabs.sendMessage).mockImplementation(async (_tab, message) => {
+      const request = message as RuntimeRequest;
+      if (request.type === "GET_TRANSLATION_STATE") return state.promise;
+      if (request.type === "TRANSLATE_PAGE") return { ok: true, data: { translated: 0, cancelled: true } };
+      return { ok: true, data: { cleared: true } };
+    });
+    button().click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("本次翻译已取消"));
+    button().click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toBe("已显示原文。"));
+    state.resolve({ ok: true, data: { translated: true } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(button().textContent).toBe("翻译全文");
+    expect(document.querySelector("#status")?.textContent).toBe("已显示原文。");
   });
 
   it("restores the action after a settings error and permits another attempt", async () => {

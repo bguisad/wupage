@@ -195,6 +195,7 @@ npm run test:page
 
 - 自动翻译由 `src/shared/auto-translation.ts` 归一化并匹配站点规则，`src/content/auto-translation.ts` 在前台 HTML 页面触发现有渐进翻译。弹窗和悬浮菜单的「＋」复用站点添加逻辑，只从 HTTP/HTTPS 地址提取域名和非默认端口，不保留路径、查询参数或片段；已有整站规则会复用，同站点的已停用规则会启用。「✓」再次点击后将当前域名写入可选的 `excludedSites`，优先于站点及语言规则；保留正向规则以继续服务其他子域名，重新加入时清除该域名的排除。设置页草稿读写保留排除项，并可单独取消排除。语言检测仅使用本机浏览器接口；路由、配置与手动停止会使过期检测结果失效。回归覆盖域名边界、通配与路径、旧设置默认关闭、动态内容、手动停止和单页导航。
 - `npm run test:auto`：构建后加载实际扩展，使用本地网页和模拟翻译服务验证规则保存、窄屏、自动触发、手动恢复原文、单页导航、目标语言跳过和异步加载的正文；另检查弹窗和悬浮菜单加入、排除及重新加入当前网站、重复规则限制、设置页持久化与保存后保留排除项、排除优先于语言规则且刷新后有效，以及新增站点立即触发翻译。报告保存在 `.npm-cache/auto-translation/`。
+- `npm run test:spa`、`npm run test:spa:edge`、`npm run test:spa:firefox`：构建对应浏览器产物后，使用独立浏览器和本地帖子页面验证站点规则与语言规则下的连续切换、前进后退、仅改变地址时的路径边界、延迟响应、原文节点复用、动态回复、手动还原与重译，以及空白加载页的后续翻译。站点规则继续匹配时保留现有监听；需要重新判断语言时等待后台停止完成，内部暂停不视为用户手动还原。中断、仍在翻译与暂时没有正文分别显示对应状态。报告与截图保存在 `.npm-cache/spa-translation-<browser>/`，支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER`、`EDGE_TEST_BROWSER` 和 `FIREFOX_BINARY`。
 - 六个预置在线翻译服务通过 `serviceMode` 区分 `free`（默认）和 `api`，凭据保存在对应配置的 `api` 中。免费分支不读取或发送这些凭据；切换方式会保留已有配置。旧版内置 Azure / Google Cloud 配置在规范化设置时迁移至对应服务商，存在不同凭据时保留独立配置。火山 API 在后台通过 Web Crypto 生成 V4 签名；腾讯 API 使用 TokenHub 的翻译模型。
 - `npm run test:services`：构建后加载实际扩展，以模拟网络响应验证六家服务的免费/API 切换、设置保存、凭据保留、实际请求分支和窄屏布局，不访问真实付费服务。支持 `PLAYWRIGHT_MODULE`、`PDF_TEST_BROWSER`，报告保存在 `.npm-cache/service-modes/`。
 - 服务额度资料保存在 `src/shared/provider-usage.ts`，设置页在切换服务、使用方式、模型或地址时更新。维护数值时须核对所链接的官方资料并更新核对日期；匿名接口与云 API 分开，官方未公开的数字不以经验值代替。`src/options/provider-usage.ts` 单独显示插件调度设置，不能将 RPM、QPS 和并发混用。说明仅使用随扩展打包的资料，不查询账号余额或额外请求第三方接口。

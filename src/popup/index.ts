@@ -354,6 +354,8 @@ async function togglePageTranslation(): Promise<void> {
       failed?: number;
       error?: string;
       remaining?: number;
+      pending?: number;
+      cancelled?: boolean;
       cleared?: boolean;
     }>(
       tab.id,
@@ -362,14 +364,21 @@ async function togglePageTranslation(): Promise<void> {
     if (version !== pageActionVersion) return;
     if (request.type === "CLEAR_TRANSLATION") {
       setStatus(result.cleared ? "已显示原文。" : "没有可清除的译文。");
+    } else if (result.cancelled) {
+      setStatus("页面或翻译状态已变化，本次翻译已取消。");
+      await loadTranslationState();
     } else {
       const failed = result.failed ?? 0;
       setStatus(
         failed > 0
           ? `已翻译 ${result.translated ?? 0} 段，失败 ${failed} 段：${result.error ?? ""}`
-          : result.remaining
-            ? `已翻译当前区域 ${result.translated ?? 0} 段，滚动页面将继续翻译。`
-            : `已翻译 ${result.translated ?? 0} 段，缓存命中 ${result.cached ?? 0} 段。`
+          : result.pending
+            ? "正在翻译当前区域，后续内容将自动继续翻译。"
+            : result.remaining
+              ? `已翻译当前区域 ${result.translated ?? 0} 段，滚动页面将继续翻译。`
+              : result.translated
+                ? `已翻译 ${result.translated} 段，缓存命中 ${result.cached ?? 0} 段。`
+                : "当前区域暂无可翻译内容，新内容加载后将自动翻译。"
       );
     }
   } catch (error) {
@@ -460,15 +469,18 @@ async function loadParagraphMode(): Promise<void> {
 }
 
 async function loadTranslationState(): Promise<void> {
+  const version = pageActionVersion;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab.id) return;
     const result = await sendTabMessage<{ translated: boolean }>(tab.id, {
       type: "GET_TRANSLATION_STATE"
     });
+    if (version !== pageActionVersion) return;
     pageTranslated = result.translated;
     updatePageToggleButton();
   } catch {
+    if (version !== pageActionVersion) return;
     pageTranslated = false;
     updatePageToggleButton();
   }

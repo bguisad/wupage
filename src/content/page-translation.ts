@@ -82,6 +82,7 @@ export interface PageTranslationResult {
   errorCode?: string;
   retryAt?: number;
   remaining: number;
+  cancelled?: boolean;
 }
 
 export interface PageTranslationState extends PageTranslationResult {
@@ -101,7 +102,7 @@ const stateListeners = new Set<(event?: "stopped") => void>();
 export interface PageTranslationCoordinator {
   state(): PageTranslationState;
   start(settings: ExtensionSettings, reuseResults: boolean): Promise<PageTranslationResult>;
-  stop(): void;
+  stop(): void | Promise<void>;
   display(mode: TranslationDisplayMode): void;
 }
 let coordinator: PageTranslationCoordinator | undefined;
@@ -245,19 +246,19 @@ export function clearPageTranslation(): void {
   notifyTranslationState();
 }
 
-export function hidePageTranslation(): void {
-  if (coordinator) { coordinator.stop(); return; }
+export function hidePageTranslation(): void | Promise<void> {
+  if (coordinator) return coordinator.stop();
   hideLocalPageTranslation();
 }
 
-export function hideLocalPageTranslation(): void {
+export function hideLocalPageTranslation(explicitStop = true): void {
   invalidatePendingDocumentTranslations();
   const session = activeSession;
   if (!session && suspendedSession) {
     // Paragraph translation can add visible results while the page session is
     // suspended. Hide those too, keeping the saved page results and observer.
     preserveViewportPosition(hideTranslations, [...suspendedSession.entries.values()].map((entry) => entry.segment));
-    notifyTranslationState("stopped");
+    notifyTranslationState(explicitStop ? "stopped" : undefined);
     return;
   }
   cancelActiveSession();
@@ -265,7 +266,7 @@ export function hideLocalPageTranslation(): void {
   suspendedSession = session;
   preserveViewportPosition(hideTranslations, session ? [...session.entries.values()].map((entry) => entry.segment) : []);
   if (session) observePage(session);
-  notifyTranslationState("stopped");
+  notifyTranslationState(explicitStop ? "stopped" : undefined);
 }
 
 function getTranslationIdentity(settings: ExtensionSettings): string {

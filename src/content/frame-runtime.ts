@@ -45,9 +45,12 @@ export function installFrameRuntime(documentKey: string, options: { top: boolean
     if (value.revision < appliedRevision) return documentState();
     appliedRevision = value.revision;
     updateSnapshot(value);
+    // An earlier route update can reach this document after a local stop.
+    // Wait for that stop's acknowledgement instead of reviving its old work.
+    if (desiredActive === false && value.active) return documentState();
     if (!allowed || !value.active) {
       appliedId = value.id;
-      if (getLocalPageTranslationState().active || hasPageTranslations()) hideLocalPageTranslation();
+      if (getLocalPageTranslationState().active || hasPageTranslations()) hideLocalPageTranslation(false);
       setPageRequestIdentity(undefined); report();
       return documentState();
     }
@@ -81,12 +84,12 @@ export function installFrameRuntime(documentKey: string, options: { top: boolean
         if (snapshot) { snapshot = { ...snapshot, active: true, state: { ...snapshot.state, active: true } }; notifyCoordinatedPageState(); }
         await initial;
         if (!registered) await register();
-        if (version !== intent) return { ...emptyDocumentState() };
+        if (version !== intent) return { ...emptyDocumentState(), cancelled: true };
         try {
           const value = await sendRuntimeRequest<FrameSessionSnapshot>({ type: "FRAME_SESSION_ACTION", action: "start", reuseResults });
-          if (version !== intent) return emptyDocumentState();
+          if (version !== intent) return { ...emptyDocumentState(), cancelled: true };
           desiredActive = undefined; updateSnapshot(value); notifyCoordinatedPageState();
-          return value.state;
+          return value.active ? value.state : { ...value.state, cancelled: true };
         } catch (error) {
           if (version === intent) {
             desiredActive = undefined;
@@ -103,8 +106,9 @@ export function installFrameRuntime(documentKey: string, options: { top: boolean
         desiredActive = false;
         hideLocalPageTranslation();
         if (snapshot) { snapshot = { ...snapshot, active: false, state: emptyDocumentState() }; notifyCoordinatedPageState(); }
-        void initial.then(() => sendRuntimeRequest<FrameSessionSnapshot>({ type: "FRAME_SESSION_ACTION", action: "stop" })).then(value => {
-          if (version !== intent) return;
+        return initial.then(() => version === intent
+          ? sendRuntimeRequest<FrameSessionSnapshot>({ type: "FRAME_SESSION_ACTION", action: "stop" }) : undefined).then(value => {
+          if (!value || version !== intent) return;
           desiredActive = undefined; updateSnapshot(value); notifyCoordinatedPageState();
         }).catch(() => {});
       },
@@ -137,7 +141,7 @@ export function installFrameRuntime(documentKey: string, options: { top: boolean
   }
   window.addEventListener("pagehide", () => {
     if (options.top) resumeAfterRestore = desiredActive ?? snapshot?.state.active ?? getLocalPageTranslationState().active;
-    hideLocalPageTranslation();
+    hideLocalPageTranslation(false);
     void sendRuntimeRequest({ type: "FRAME_LEAVE", documentKey }).catch(() => {});
   });
   return { apply, updateSnapshot };

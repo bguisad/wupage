@@ -9,7 +9,7 @@ interface AutoTranslationDependencies {
   loadSettings: () => Promise<ExtensionSettings>;
   start: (settings: ExtensionSettings) => Promise<unknown>;
   active: () => boolean;
-  stop: () => void;
+  stop: () => void | Promise<void>;
   subscribe: typeof subscribePageTranslationState;
   detectLanguage?: (text: string) => Promise<{ languages: Array<{ language: string; percentage: number }> }>;
 }
@@ -35,6 +35,7 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
   let previouslyActive = handled;
   let owned = false;
   let transitioning = false;
+  let invokingStop = false;
   let generation = 0;
   let timer: number | undefined;
   let running = false;
@@ -43,8 +44,15 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
   let lastSample = "";
 
   const unsubscribe = deps.subscribe(event => {
+    checkRoute();
     const active = deps.active();
-    if (!transitioning && !active && (previouslyActive || event === "stopped")) {
+    // Automatic route/rule changes include an asynchronous background stop.
+    // Its notifications are not a user's request to keep the page restored.
+    if (transitioning) {
+      if (event === "stopped" && !invokingStop) { handled = true; owned = false; generation++; }
+      previouslyActive = active; return;
+    }
+    if (!active && (previouslyActive || event === "stopped")) {
       handled = true; owned = false; generation++;
     } else if (active) handled = true;
     previouslyActive = active;
@@ -54,7 +62,14 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
   function stopOwned(): void {
     if (owned && deps.active()) {
       transitioning = true;
-      try { deps.stop(); } finally { transitioning = false; }
+      invokingStop = true;
+      let stopped: void | Promise<void>;
+      try { stopped = deps.stop(); } catch { stopped = undefined; } finally { invokingStop = false; }
+      void Promise.resolve(stopped).catch(() => {}).finally(() => {
+        transitioning = false; previouslyActive = deps.active();
+        if (previouslyActive) handled = true;
+        schedule();
+      });
     }
     owned = false; previouslyActive = deps.active();
   }
@@ -63,18 +78,24 @@ export function initAutoTranslation(overrides: Partial<AutoTranslationDependenci
     const next = routeKey();
     if (next === route) return;
     generation++; route = next; lastSample = "";
+    // A selected site/path still owns this same document. Its existing DOM
+    // observer already handles new posts, including replies arriving later.
+    if (owned && deps.active() && settings?.autoTranslation?.enabled
+      && !isAutoTranslationWebsiteExcluded(settings.autoTranslation, location.href)
+      && matchesAutoTranslationSite(settings.autoTranslation, location.href)) return;
     stopOwned(); handled = deps.active();
   }
 
   function schedule(): void {
     if (disposed || handled || !settings?.autoTranslation?.enabled || isAutoTranslationWebsiteExcluded(settings.autoTranslation, location.href) || document.visibilityState === "hidden") return;
+    if (transitioning) return;
     if (running) { dirty = true; return; }
     if (timer !== undefined) return;
     timer = window.setTimeout(() => { timer = undefined; void evaluate(); }, 350);
   }
 
   async function evaluate(): Promise<void> {
-    if (disposed || handled || !settings || document.visibilityState === "hidden") return;
+    if (disposed || handled || transitioning || !settings || document.visibilityState === "hidden") return;
     running = true; dirty = false;
     const version = generation;
     const current = settings;

@@ -110,6 +110,58 @@ describe("automatic page translation", () => {
     await settle(); expect(start).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the live observer when switching posts inside the selected site", async () => {
+    mount({ customSites: [{ id: "site", pattern: "example.com/docs/*", enabled: true }] });
+    await settle();
+    vi.stubGlobal("location", new URL("https://example.com/docs/next"));
+    notify(); // Background route notification can precede the new post's DOM.
+    document.querySelector("main")!.innerHTML = "<p>A newly loaded post and replies.</p>";
+    await settle();
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("waits for the background stop before evaluating a new page's language", async () => {
+    let finish!: () => void;
+    stop.mockImplementation(() => {
+      active = false; notify("stopped");
+      return new Promise<void>(resolve => { finish = () => { notify(); resolve(); }; });
+    });
+    mount({ nonTargetLanguage: true }); await settle();
+    vi.stubGlobal("location", new URL("https://example.com/next"));
+    document.querySelector("p")!.textContent = "A different English post with enough visible text to trigger language detection again.";
+    await settle();
+    expect(stop).toHaveBeenCalledTimes(1); expect(start).toHaveBeenCalledTimes(1);
+    finish(); await settle();
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  it("honors a user's stop while an automatic route transition is pending", async () => {
+    let finish!: () => void;
+    stop.mockImplementation(() => {
+      active = false; notify("stopped");
+      return new Promise<void>(resolve => { finish = resolve; });
+    });
+    mount({ nonTargetLanguage: true }); await settle();
+    vi.stubGlobal("location", new URL("https://example.com/next"));
+    document.querySelector("p")!.textContent += " New post.";
+    await settle();
+    notify("stopped"); // A separate restore action, not our synchronous stop.
+    finish(); await settle();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not translate a target-language page after the previous route stops", async () => {
+    mount({ nonTargetLanguage: true }); await settle();
+    detect.mockResolvedValue({ languages: [{ language: "zh", percentage: 99 }] });
+    vi.stubGlobal("location", new URL("https://example.com/chinese"));
+    document.querySelector("p")!.textContent = "这是一个新的中文帖子，内容已经使用目标语言，不能沿用上一条英文帖子的语言判断，也不应该向翻译服务发送重复翻译请求。";
+    await settle();
+    expect(stop).toHaveBeenCalledTimes(1); expect(start).toHaveBeenCalledTimes(1);
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidates pending detection when automatic translation is disabled", async () => {
     let release!: (value: { languages: Array<{ language: string; percentage: number }> }) => void;
     detect.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
