@@ -1,5 +1,6 @@
 import type { DictionaryProvider, SelectionTranslationSettings } from "./dictionary";
 import type { AppearanceSettings } from "./appearance";
+import type { VideoTranslationSettings } from "./video";
 import type { ShortcutEnabledSettings, ShortcutSettings, TranslationShortcut } from "./shortcuts";
 
 export type ProviderType =
@@ -180,6 +181,7 @@ export type DualServiceProviderConfig = Extract<ProviderConfig, DualServiceConfi
 }>;
 
 export interface ExtensionSettings {
+  videoTranslation?: VideoTranslationSettings;
   shortcuts?: ShortcutSettings;
   shortcutEnabled?: ShortcutEnabledSettings;
   appearance?: AppearanceSettings;
@@ -313,6 +315,10 @@ export type RuntimeRequest =
   | { type: "INSTALL_OCR" }
   | { type: "REMOVE_OCR" }
   | { type: "TRANSLATE_PAGE" }
+  | { type: "OPEN_VIDEO_SUBTITLES"; tabId?: number }
+  | { type: "VIDEO_FRAME_STATUS"; videos: number; area: number; playing: boolean }
+  | ({ type: "TRANSLATE_VIDEO_SUBTITLES"; sessionId: string; requestId: string } & TranslateBatchRequest)
+  | { type: "CANCEL_VIDEO_SUBTITLES"; sessionId: string; requestId?: string }
   | { type: "CLEAR_TRANSLATION" }
   | { type: "GET_TRANSLATION_STATE" }
   | { type: "GET_PARAGRAPH_MODE" }

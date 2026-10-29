@@ -6,9 +6,11 @@ import { initParagraphContextTranslation } from "./paragraph-context";
 import { addRuntimeMessageListener, sendRuntimeRequest } from "./runtime";
 import { injectContentStyles } from "./styles";
 import { setPageTranslationDisplayMode } from "./page-translation";
+import { initVideoSubtitles, openVideoSubtitles } from "./video-subtitles";
 
 // Embedded documents get paragraph translation without additional floating UI.
 if (window !== window.top) {
+  initVideoSubtitles();
   const translate = initParagraphContextTranslation();
   injectContentStyles();
   const appearance = setupAppearance(undefined, { extensionPage: false, onChange: scheme => {
@@ -25,6 +27,7 @@ if (window !== window.top) {
     if (!appearanceRevision) appearance.update(settings.appearance);
   }).catch(() => undefined);
   addRuntimeMessageListener((request, _sender, respond) => {
+    if (request.type === "OPEN_VIDEO_SUBTITLES") { respond({ ok: true, data: openVideoSubtitles() }); return; }
     if (request.type !== "TRANSLATE_CONTEXT_PARAGRAPH") return;
     void translate(request.action).then(data => respond({ ok: true, data }))
       .catch(error => respond({ ok: false, error: String(error) }));

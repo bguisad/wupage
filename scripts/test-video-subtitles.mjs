@@ -1,0 +1,188 @@
+// Real MV3 regression: local video, native captions, cross-origin iframe, mock provider.
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { createServer } from 'node:http';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const output = path.join(root, '.npm-cache/video-subtitles');
+await fs.mkdir(output, { recursive: true });
+const moduleName = process.env.PLAYWRIGHT_MODULE || 'playwright';
+const { chromium } = await import(path.isAbsolute(moduleName) ? pathToFileURL(moduleName).href : moduleName);
+const requests = [];
+const errors = [];
+const checks = [];
+let failNext = false;
+const translations = new Map([
+  ['Hello world.', '你好，世界。'], ['Read the existing subtitles.', '读取视频现有字幕。'],
+  ['Seek to another moment.', '跳转到另一个时间。'], ['Imported subtitles.', '导入的字幕。'], ['Retry this subtitle.', '重试这条字幕。'], ['Bonjour tout le monde.', '法语字幕译文。']
+]);
+const server = createServer(async (request, response) => {
+  if (request.url === '/translate' && request.method === 'POST') {
+    let body = ''; for await (const chunk of request) body += chunk;
+    const data = JSON.parse(body); requests.push(data);
+    response.setHeader('Content-Type', 'application/json');
+    if (failNext) { failNext = false; response.statusCode = 429; response.end('{"error":"test quota"}'); return; }
+    response.end(JSON.stringify({ translations: data.texts.map(text => translations.get(text) || '译：' + text) })); return;
+  }
+  if (request.url === '/embedded') {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end('<!doctype html><h1>Embedded video</h1><iframe width="850" height="750" src="http://localhost:' + server.address().port + '/"></iframe>'); return;
+  }
+  const name = request.url === '/video-subtitles.vtt' ? 'video-subtitles.vtt' : 'video-subtitles.html';
+  response.setHeader('Content-Type', name.endsWith('.vtt') ? 'text/vtt; charset=utf-8' : 'text/html; charset=utf-8');
+  response.end(await fs.readFile(path.join(root, 'tests/fixtures', name)));
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const origin = 'http://127.0.0.1:' + server.address().port;
+let context;
+try {
+  context = await chromium.launchPersistentContext(path.join(output, 'profile-' + Date.now()), {
+    ...(process.env.PDF_TEST_BROWSER ? { executablePath: process.env.PDF_TEST_BROWSER } : { channel: 'chromium' }),
+    headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging'], viewport: { width: 1240, height: 800 }
+  });
+  const session = await context.browser().newBrowserCDPSession();
+  await session.send('Extensions.loadUnpacked', { path: path.join(root, process.env.VIDEO_TEST_EXTENSION_DIR || 'dist') }); await session.detach();
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  const extension = 'chrome-extension://' + new URL(worker.url()).host;
+  const options = await context.newPage(); await options.goto(extension + '/options.html');
+  await options.evaluate(async origin => {
+    const { data: settings } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    settings.activeProviderId = 'http-template'; settings.sourceLang = 'auto'; settings.targetLang = 'zh-CN'; settings.cacheEnabled = false;
+    Object.assign(settings.providers.find(provider => provider.id === 'http-template'), {
+      enabled: true, url: origin + '/translate', method: 'POST', headers: { 'Content-Type': 'application/json' },
+      bodyTemplate: '{"texts":{{json texts}},"targetLang":{{json targetLang}}}', responsePath: 'translations'
+    });
+    await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
+  }, origin);
+  const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000);
+  await page.goto(origin); await page.waitForFunction(() => window.fixtureReady);
+  await page.waitForFunction(() => document.querySelector('video').textTracks[0]?.cues?.length === 3);
+  const view = page.locator('[data-wupage-video]').first();
+  await view.waitFor(); assert.equal(requests.length, 0, 'discovering video must not translate');
+  const tab = await worker.evaluate(async url => (await chrome.tabs.query({ url }))[0], page.url());
+  const popup = await context.newPage();
+  await popup.addInitScript(tab => { chrome.tabs.query = async () => [tab]; window.close = () => {}; }, tab);
+  await popup.goto(extension + '/popup.html'); await popup.locator('#openVideoSubtitles:enabled').waitFor();
+  await popup.setViewportSize({ width: 360, height: 700 });
+  await popup.screenshot({ path: path.join(output, 'entry.png') });
+  await popup.locator('#openVideoSubtitles').click();
+  await page.waitForFunction(() => document.querySelector('[data-wupage-video]')?.hasAttribute('data-enabled'));
+  await popup.close(); await page.bringToFront();
+  const translated = view.locator('.translation span');
+  await translated.filter({ hasText: '你好，世界。' }).waitFor();
+  assert.equal(await view.locator('.panel').isVisible(), false, 'one click starts without an obstructing panel');
+  assert.equal(await page.evaluate(() => document.querySelector('video').textTracks[0].mode), 'hidden');
+  assert.deepEqual(requests.flatMap(request => request.texts), [...translations.keys()].slice(0,3));
+  checks.push('one-click popup activation; native WebVTT; lookahead; compact controls');
+  const caption = await view.locator('.captions').boundingBox(); const video = await page.locator('video').boundingBox();
+  assert.ok(caption.x >= video.x && caption.x + caption.width <= video.x + video.width);
+  assert.ok(caption.y >= video.y && caption.y + caption.height <= video.y + video.height);
+  await page.screenshot({ path: path.join(output, 'bilingual.png') });
+  await view.locator('.settings').evaluate(button => button.click()); await view.locator('.panel').waitFor();
+  await page.screenshot({ path: path.join(output, 'settings.png') });
+  await view.locator('.original').uncheck();
+  await page.waitForFunction(() => document.querySelector('[data-wupage-video]').shadowRoot.querySelector('.source span').textContent === '');
+  assert.equal(requests.length, 1, 'changing appearance must reuse text'); await view.locator('.original').check();
+  await view.locator('.close').click();
+  await page.evaluate(() => { document.querySelector('video').currentTime = 2.3; });
+  await translated.filter({ hasText: '跳转到另一个时间。' }).waitFor(); assert.equal(requests.length, 1);
+  checks.push('settings do not retransmit; seek uses media time and cache');
+  await page.evaluate(() => {
+    const video=document.querySelector('video');video.textTracks[0].mode='disabled';
+    const french=video.addTextTrack('subtitles','French','fr');french.mode='hidden';
+    french.addCue(new VTTCue(0,4,'Bonjour tout le monde.'));
+  });
+  await translated.filter({hasText:'法语字幕译文。'}).waitFor();
+  await page.evaluate(() => {
+    const tracks=document.querySelector('video').textTracks;tracks[1].mode='disabled';tracks[0].mode='showing';
+  });
+  await translated.filter({hasText:'跳转到另一个时间。'}).waitFor();
+  checks.push('website native subtitle language changes; return to the original selection');
+  await page.locator('#fullscreen').click();
+  await page.waitForFunction(() => document.fullscreenElement?.contains(document.querySelector('[data-wupage-video]')));
+  await translated.filter({ hasText: '跳转到另一个时间。' }).waitFor(); await page.evaluate(() => document.exitFullscreen());
+  await page.locator('#nativeFullscreen').click();
+  await page.waitForFunction(() => [...document.querySelector('video').textTracks].some(track => track.label === 'WuPage 双语' && track.mode === 'showing' && track.cues?.length));
+  await page.evaluate(() => document.exitFullscreen()); checks.push('container and native video fullscreen');
+  await page.locator('#pageFullscreen').click();
+  await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+  assert.equal(await page.evaluate(() => document.documentElement.getBoundingClientRect().height), 0, 'reproduce fixed-body full-page player layout');
+  await translated.filter({ hasText: '跳转到另一个时间。' }).waitFor();
+  assert.equal(await view.evaluate(host => host.hidden), false);
+  await page.locator('video').hover(); await view.locator('.settings').hover();
+  await page.waitForTimeout(2800);
+  assert.equal(await view.locator('.toolbar').evaluate(toolbar => getComputedStyle(toolbar).pointerEvents), 'auto');
+  await view.locator('.settings').click(); await view.locator('.panel').waitFor();
+  await page.screenshot({path:path.join(output,'page-fullscreen.png')});
+  await view.locator('.close').click(); await page.evaluate(() => document.exitFullscreen());
+  checks.push('whole-page fullscreen with zero-height HTML; hover controls remain clickable');
+  await view.locator('.settings').evaluate(button => button.click()); await view.locator('details').evaluate(details => { details.open = true; });
+  await view.locator('input[type=file]').setInputFiles({ name: 'sample.srt', mimeType: 'text/plain', buffer: Buffer.from('1\n00:00:00,000 --> 00:00:04,000\n<i>Imported subtitles.</i>') });
+  await translated.filter({ hasText: '导入的字幕。' }).waitFor(); checks.push('SRT import starts immediately');
+  await view.locator('.settings').evaluate(button => button.click());
+  failNext = true;
+  await view.locator('input[type=file]').setInputFiles({ name: 'retry.vtt', mimeType: 'text/vtt', buffer: Buffer.from('WEBVTT\n\n00:00.000 --> 00:04.000\nRetry this subtitle.') });
+  await page.waitForFunction(() => document.querySelector('[data-wupage-video]').hasAttribute('data-error'));
+  const count = requests.length; await page.waitForTimeout(600); assert.equal(requests.length, count);
+  if (!await view.locator('.panel').isVisible()) await view.locator('.settings').evaluate(button => button.click());
+  await view.locator('.retry').click();
+  await translated.filter({ hasText: '重试这条字幕。' }).waitFor(); checks.push('bounded quota failure and manual retry');
+  await view.locator('.close').click().catch(() => {});
+  await page.setViewportSize({ width: 390, height: 760 }); await view.locator('.settings').evaluate(button => button.click());
+  const bounds = await view.locator('.panel').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390);
+  await page.screenshot({ path: path.join(output, 'mobile.png') }); checks.push('responsive settings');
+  await view.locator('.close').click();
+  await options.evaluate(async () => {
+    const { data: settings } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }); settings.targetLang = 'ja';
+    await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
+  });
+  await page.waitForFunction(() => document.querySelector('[data-wupage-video]').shadowRoot.querySelector('.target').value === 'ja');
+  await page.waitForTimeout(500); assert.equal(requests.at(-1).targetLang, 'ja');
+  await view.locator('.toggle').evaluate(button => button.click());
+  assert.equal(await page.evaluate(() => document.querySelector('video').textTracks[0].mode), 'showing');
+  assert.equal(await view.locator('.captions').isVisible(), false); checks.push('language changes restart correctly; stop restores native subtitles');
+  await page.setViewportSize({ width: 1240, height: 900 });
+  await view.locator('.toggle').evaluate(button => button.click());
+  const previousPlayer = await view.getAttribute('id');
+  await page.evaluate(async () => {
+    const old = document.querySelector('video'), parent = old.parentElement, next = old.cloneNode(true);
+    old.remove(); await new Promise(resolve => setTimeout(resolve, 140)); parent.prepend(next); next.load();
+  });
+  await page.waitForFunction(previous => {
+    const host=document.querySelector('[data-wupage-video]');
+    return host?.id!==previous&&host?.hasAttribute('data-enabled')&&host?.shadowRoot.querySelector('.translation span').textContent==='你好，世界。';
+  }, previousPlayer);
+  await view.locator('.toggle').evaluate(button => button.click());
+  const stoppedPlayer = await view.getAttribute('id');
+  await page.evaluate(() => { const old=document.querySelector('video');old.replaceWith(old.cloneNode(true)); });
+  await page.waitForFunction(previous => { const host=document.querySelector('[data-wupage-video]');return host&&host.id!==previous; }, stoppedPlayer);
+  assert.equal(await view.getAttribute('data-enabled'),null);
+  checks.push('delayed video replacement preserves manual translation; a manual stop stays stopped');
+  const embedded = await context.newPage(); embedded.on('pageerror', error => errors.push(error.message));
+  await embedded.goto(origin + '/embedded');
+  const frame = embedded.frameLocator('iframe');
+  await frame.locator('[data-wupage-video]').waitFor();
+  await frame.locator('video').evaluate(async video => { if(video.readyState < 2) await new Promise(resolve => video.addEventListener('loadeddata', resolve, {once:true})); });
+  const embeddedTab = await worker.evaluate(async url => (await chrome.tabs.query({ url }))[0], embedded.url());
+  const result = await options.evaluate(tabId => chrome.runtime.sendMessage({ type: 'OPEN_VIDEO_SUBTITLES', tabId }), embeddedTab.id);
+  assert.equal(result.ok,true);
+  await frame.locator('[data-wupage-video] .translation span').filter({ hasText: '你好，世界。' }).waitFor();
+  checks.push('cross-origin iframe discovery and popup frame routing');
+  await embedded.close();
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ passed: true, checks, requests: requests.length }));
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ passed: true, checks, requests, errors }, null, 2));
+} catch (error) {
+  const states=[];
+  for (const page of context?.pages() ?? []) {
+    if (!page.url().startsWith(origin)) continue;
+    states.push(await page.evaluate(()=>({url:location.href,time:document.querySelector('video')?.currentTime,views:[...document.querySelectorAll('[data-wupage-video]')].map(el=>({status:el.shadowRoot.querySelector('.status').textContent,source:el.shadowRoot.querySelector('.source').textContent,translation:el.shadowRoot.querySelector('.translation').textContent,hidden:el.hidden,bounds:el.getBoundingClientRect().toJSON()}))})));
+    await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});
+  }
+  await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ passed: false, checks, errors, requests, states, failure: String(error) }, null, 2));
+  throw error;
+} finally {
+  await context?.close(); await new Promise(resolve => server.close(resolve));
+}

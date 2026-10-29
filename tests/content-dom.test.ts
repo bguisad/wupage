@@ -22,6 +22,16 @@ import {
 import { injectContentStyles } from "../src/content/styles";
 
 describe("content DOM translation extraction", () => {
+  it('keeps Udemy native captions out of page translation before subtitle translation starts', () => {
+    vi.stubGlobal('location', new URL('https://www.udemy.com/course/fixture/'));
+    try {
+      document.body.innerHTML = '<main><p>Ordinary course description.</p></main><div data-purpose="media-player-container"><video></video><div class="_caption-container_nnobv_16"><div class="_cue-text_nnobv_32">The native video subtitle should stay unchanged.</div></div></div>';
+      stubLayout();
+      expect(collectTextSegments().map(segment => segment.text)).toEqual(['Ordinary course description.']);
+      vi.stubGlobal('location', new URL('https://example.com/article'));
+      expect(collectTextSegments().map(segment => segment.text)).toContain('The native video subtitle should stay unchanged.');
+    } finally { vi.unstubAllGlobals(); }
+  });
   it.each(["Label", "State", "Counter", "layout-with-breadcrumbs", "withBreadcrumbs"])
     ("does not exclude ordinary prose because of a generic %s class", (className) => {
       document.body.innerHTML = `<article class="${className}"><p>Ordinary readable article text.</p></article>`;

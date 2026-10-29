@@ -11,9 +11,12 @@ import { initializeOllamaCompatibility } from "./ollama-compatibility";
 import { requestLocal } from "./local";
 import { lookupDictionary, playDictionaryAudio, stopDictionaryAudio } from "./dictionary";
 import { normalizeSelectionTranslation } from "../shared/dictionary";
+import { cancelVideo, clearVideoTab, openVideoInTab, registerVideoFrame, translateVideo } from "./video";
 import { checkDoubao, getDoubaoStatus } from "./doubao";
 import { initializeDoubaoCompatibility } from "./doubao-compatibility";
 import { runtimeErrorResponse } from "../shared/errors";
+
+chrome.tabs?.onRemoved?.addListener(clearVideoTab);
 
 chrome.runtime.onMessage.addListener((request: RuntimeRequest, sender, sendResponse) => {
   if ("target" in request) return;
@@ -42,6 +45,14 @@ try {
 
 async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   switch (request.type) {
+    case "VIDEO_FRAME_STATUS":
+      registerVideoFrame(request, sender); return null;
+    case "TRANSLATE_VIDEO_SUBTITLES":
+      return translateVideo(request, sender);
+    case "CANCEL_VIDEO_SUBTITLES":
+      cancelVideo(request, sender); return null;
+    case "OPEN_VIDEO_SUBTITLES":
+      return openVideoInTab(request.tabId ?? sender.tab?.id);
     case "LOOKUP_DICTIONARY":
     case "PLAY_DICTIONARY_AUDIO": {
       const settings = normalizeSelectionTranslation((await getSettings()).selectionTranslation);

@@ -8,7 +8,8 @@ import { verifyOcrRuntime } from "./build/ocr/verify";
 
 export default defineConfig(({ mode }) => {
   const firefox = mode === "firefox";
-  const outDir = firefox ? "dist-firefox" : "dist";
+  const videoPreview = mode === "video-preview";
+  const outDir = videoPreview ? "dist-video-preview" : firefox ? "dist-firefox" : "dist";
   const target = firefox ? "firefox154" : "chrome120";
   const sourcemap = process.env.WUPAGE_SOURCEMAP === "1";
   return {
@@ -18,10 +19,17 @@ export default defineConfig(({ mode }) => {
         const runtime = await verifyOcrRuntime(resolve(__dirname));
         // Manifest content scripts are classic scripts. Bundle them independently
         // so shared helpers cannot introduce Rollup's module imports into content.js.
-        await writeFile(resolve(__dirname, outDir, "manifest.json"), JSON.stringify(browserManifest(manifest, firefox), null, 2) + "\n");
+        const generated = browserManifest(manifest, firefox);
+        const extensionManifest = videoPreview ? { ...generated,
+          name: "WuPage 视频字幕预览版", version_name: `${manifest.version}-video-preview.9`,
+          action: { ...manifest.action, default_title: "WuPage 视频字幕预览版" }
+        } : generated;
+        await writeFile(resolve(__dirname, outDir, "manifest.json"), JSON.stringify(extensionManifest, null, 2) + "\n");
         await bundle({ entryPoints: ["src/content/index.ts"], outfile: resolve(__dirname, outDir, "content.js"),
           bundle: true, minify: true, sourcemap, format: "iife", platform: "browser", target });
         await bundle({ entryPoints: ["src/content/paragraph-frame.ts"], outfile: resolve(__dirname, outDir, "paragraph-frame.js"),
+          bundle: true, minify: true, sourcemap, format: "iife", platform: "browser", target });
+        await bundle({ entryPoints: ["src/video/page-bridge.ts"], outfile: resolve(__dirname, outDir, "video-page-bridge.js"),
           bundle: true, minify: true, sourcemap, format: "iife", platform: "browser", target });
         const output = resolve(__dirname, outDir, "ocr-runtime");
         await mkdir(output, { recursive: true });

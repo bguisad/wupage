@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WuPage Translator",
-  "description": "One-click page translation with configurable HTTP and OpenAI- or Anthropic-compatible LLM providers.",
+  "description": "Translate pages, PDFs, images and video subtitles with configurable translation services and LLM providers.",
   "version": "1.4.1",
   "icons": {
     "16": "icons/icon-16.png",
@@ -24,6 +24,13 @@
     "type": "module"
   },
   "content_scripts": [
+    {
+      "matches": ["https://*.youtube.com/*", "https://*.youtube-nocookie.com/*", "https://*.bilibili.com/*"],
+      "js": ["video-page-bridge.js"],
+      "all_frames": true,
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],

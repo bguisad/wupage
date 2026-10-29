@@ -1,0 +1,54 @@
+import { subtitleText, type SubtitleCue } from "./subtitles";
+
+function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
+
+export function validSubtitleCues(value: unknown): SubtitleCue[] {
+  if (!Array.isArray(value) || value.length > 20_000) throw new Error("字幕数据超出可处理范围。");
+  const cues: SubtitleCue[] = [];
+  for (const item of value) {
+    if (!record(item) || typeof item.start !== "number" || typeof item.end !== "number" || typeof item.text !== "string"
+      || !Number.isFinite(item.start) || !Number.isFinite(item.end) || item.start < 0 || item.end <= item.start || item.end > 864_000
+      || item.text.length > 4000) continue;
+    const text = subtitleText(item.text);
+    if (text) cues.push({ start: item.start, end: item.end, text });
+  }
+  return cues.sort((a, b) => a.start - b.start);
+}
+
+export function youtubeCues(payload: unknown): SubtitleCue[] {
+  if (!record(payload) || !Array.isArray(payload.events) || payload.events.length > 30_000) return [];
+  const cues: SubtitleCue[] = [];
+  for (const event of payload.events) {
+    if (!record(event) || !Array.isArray(event.segs) || typeof event.tStartMs !== "number") continue;
+    const text = subtitleText(event.segs.map(segment => record(segment) && typeof segment.utf8 === "string" ? segment.utf8 : "").join(""));
+    if (!text) continue;
+    const start = event.tStartMs / 1000;
+    const duration = typeof event.dDurationMs === "number" ? event.dDurationMs / 1000 : 4;
+    const previous = cues.at(-1);
+    if (event.aAppend === 1 && previous && start <= previous.end + .15) {
+      previous.text = `${previous.text}${/^[\p{P}\s]/u.test(text) ? "" : " "}${text}`;
+      previous.end = Math.max(previous.end, start + duration);
+    } else {
+      if (previous && previous.end > start && start > previous.start) previous.end = start;
+      cues.push({ start, end: start + Math.max(.01, duration), text });
+    }
+  }
+  return validSubtitleCues(cues);
+}
+
+export function bilibiliCues(payload: unknown): SubtitleCue[] {
+  if (!record(payload) || !Array.isArray(payload.body)) return [];
+  return validSubtitleCues(payload.body.map(item => record(item) ? { start: item.from, end: item.to, text: item.content } : null));
+}
+
+export interface PageSubtitleTrack { id: string; label: string; language: string; automatic?: boolean }
+export interface PageSubtitleCatalogue { key: string; tracks: PageSubtitleTrack[]; selected?: string }
+export const VIDEO_BRIDGE_CHANNEL = "wupage-video-subtitles-v1";
+
+export function parseCatalogue(value: unknown): PageSubtitleCatalogue | undefined {
+  if (!record(value) || typeof value.key !== "string" || value.key.length > 2048 || !Array.isArray(value.tracks) || value.tracks.length > 200) return;
+  const tracks = value.tracks.filter((track): track is unknown & PageSubtitleTrack => record(track)
+    && typeof track.id === "string" && track.id.length <= 128 && typeof track.label === "string" && track.label.length <= 200
+    && typeof track.language === "string" && track.language.length <= 32);
+  return { key: value.key, tracks, ...(typeof value.selected === "string" ? { selected: value.selected } : {}) };
+}
