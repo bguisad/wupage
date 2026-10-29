@@ -43,6 +43,19 @@ describe("popup language controls", () => {
     return { target: query<HTMLSelectElement>("#targetLang"), sendToTab };
   }
 
+  it("saves Traditional Chinese as the target language", async () => {
+    let stored = structuredClone(DEFAULT_SETTINGS);
+    const { target } = await mountWithSave(async (settings) => {
+      stored = structuredClone(settings);
+      return { ok: true };
+    });
+    expect(target.querySelector('option[value="zh-TW"]')?.textContent).toBe("繁中");
+    target.value = "zh-TW";
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(stored.targetLang).toBe("zh-TW"));
+    expect(target.selectedOptions[0]?.textContent).toBe("繁中");
+  });
+
   it("saves rapid language and control changes in order when the first save is delayed", async () => {
     let finishFirst!: () => void;
     const firstSave = new Promise<void>((resolve) => { finishFirst = resolve; });

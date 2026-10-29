@@ -34,6 +34,7 @@ import { normalizeShortcutEnabled } from "../shared/shortcuts";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
 import { isLikelyPdfUrl } from "../pdf/launch";
 import { observeParagraphMode } from "../shared/paragraph-mode";
+import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from "../shared/languages";
 
 const FLOATING_ID = "wupage-floating-ball";
 const FLOATING_HITBOX_ID = "wupage-floating-hitbox";
@@ -51,21 +52,6 @@ const MENU_OPEN_DELAY = 500;
 const MENU_CLOSE_DELAY = 240;
 const DRAG_THRESHOLD = 4;
 const TOUCH_DRAG_THRESHOLD = 8;
-const TARGET_LANGUAGES = [
-  { code: "zh-CN", label: "中文" },
-  { code: "en", label: "English" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
-  { code: "fr", label: "Français" },
-  { code: "de", label: "Deutsch" },
-  { code: "es", label: "Español" },
-  { code: "ru", label: "Русский" }
-];
-const SOURCE_LANGUAGES = [
-  { code: "auto", label: "自动检测" },
-  ...TARGET_LANGUAGES
-];
-
 let activeParagraph: Element | null = null;
 let translating = false;
 let dragging = false;

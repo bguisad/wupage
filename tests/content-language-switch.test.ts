@@ -21,6 +21,7 @@ const originalText = "Read this paragraph before continuing to the next article.
 const outputs: Record<string, string> = {
   ja: "次の記事に進む前に、この段落をお読みください。",
   "zh-CN": "继续阅读下一篇文章之前，请先阅读这一段。",
+  "zh-TW": "繼續閱讀下一篇文章之前，請先閱讀這一段。",
   fr: "Lisez ce paragraphe avant de poursuivre vers le prochain article."
 };
 
@@ -130,6 +131,22 @@ describe("saved language changes on an active content page", () => {
       expect(ball().getAttribute("aria-label")).toBe("显示原文");
     }
   );
+
+  it("retranslates Simplified Chinese output into Traditional Chinese from the original", async () => {
+    saveSettings({ targetLang: "zh-CN" });
+    await sendPageMessage({ type: "TRANSLATE_PAGE" });
+    expect(output()).toBe(outputs["zh-CN"]);
+    const target = document.querySelector<HTMLSelectElement>("[data-role='target-lang']")!;
+    expect(target.querySelector('option[value="zh-TW"]')?.textContent).toBe("繁中");
+    target.value = "zh-TW";
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(output()).toBe(outputs["zh-TW"]));
+    expect(stored.targetLang).toBe("zh-TW");
+    expect(document.querySelector("[data-role='target-lang-value']")?.textContent).toBe("繁中");
+    expect(requests().map(request => request.targetLang)).toEqual(["zh-CN", "zh-TW"]);
+    expect(requests().map(request => request.texts)).toEqual([[originalText], [originalText]]);
+  });
 
   it("applies popup or options storage updates without restarting for repeated saves or display changes", async () => {
     await sendPageMessage({ type: "TRANSLATE_PAGE" });

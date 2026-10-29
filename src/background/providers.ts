@@ -318,7 +318,8 @@ class CloudTranslationProvider implements TranslatorProvider {
             ...(source ? { sourceLanguageCode: source } : {}), ...(api.folderId ? { folderId: api.folderId } : {}) }, signal);
         result.push(...this.checkTranslations(payload.translations?.map(entry => entry.text), texts.length));
       } else {
-        const body = { TextList: texts, TargetLanguage: normalizePublicLanguage(request.targetLang), ...(source ? { SourceLanguage: source } : {}) };
+        const body = { TextList: texts, TargetLanguage: normalizeVolcengineLang(request.targetLang),
+          ...(source ? { SourceLanguage: normalizeVolcengineLang(source) } : {}) };
         const headers = await signVolcengineTranslation(JSON.stringify(body), api.accessKeyId!, api.secretAccessKey!, api.region || "cn-north-1");
         const payload = await this.request<{ TranslationList?: Array<{ Translation?: unknown }>;
           ResponseMetadata?: { Error?: { Code?: string; Message?: string } } }>(
@@ -396,7 +397,7 @@ class PublicTranslationProvider implements TranslatorProvider {
       const payload = await this.requestJson<{ translation?: unknown; base_resp?: { status_code?: number } }>(
         "https://translate.volcengine.com/crx/translate/v1", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ source_language: from, target_language: to, text })
+          body: JSON.stringify({ source_language: normalizeVolcengineLang(from), target_language: normalizeVolcengineLang(to), text })
         }, signal
       );
       if (payload?.base_resp?.status_code !== 0) throw new Error("火山免费翻译暂时不可用，请稍后重试或切换服务。");
@@ -1030,7 +1031,12 @@ interface GoogleTranslateResponse {
 }
 
 function normalizeMicrosoftLang(value: string): string {
-  return value === "zh-CN" ? "zh-Hans" : value;
+  if (value === "zh-CN") return "zh-Hans";
+  return value === "zh-TW" ? "zh-Hant" : value;
+}
+
+function normalizeVolcengineLang(value: string): string {
+  return value === "zh-TW" ? "zh-Hant" : normalizePublicLanguage(value);
 }
 
 function normalizeGoogleLang(value: string): string {

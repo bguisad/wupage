@@ -154,6 +154,16 @@ describe("Doubao provider controls", () => {
     expect(check.disabled).toBe(false);
   });
 
+  it.each(["options", "popup", "pdf"] as const)("keeps Traditional Chinese disabled for Doubao in the %s", async (surface) => {
+    stored.targetLang = "zh-TW";
+    await launch(surface);
+    const target = query<HTMLSelectElement>("#targetLang");
+    expect(target.value).toBe("zh-TW");
+    expect(target.selectedOptions[0]?.textContent).toBe("繁中");
+    expect(target.selectedOptions[0]?.disabled).toBe(true);
+    expect(target.title).toContain("豆包暂不支持");
+  });
+
   it.each(["popup", "pdf"] as const)("saves ordinary source language choices across Doubao selections in the %s", async (surface) => {
     stored.targetLang = "pt";
     await launch(surface);
