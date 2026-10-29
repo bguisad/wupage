@@ -1,10 +1,13 @@
-import { DEFAULT_SHORTCUTS, DEFAULT_SHORTCUT_ENABLED, LOCAL_SHORTCUTS, formatShortcut, normalizeShortcutEnabled, normalizeShortcuts, shortcutFromEvent, shortcutWarning,
+import { DEFAULT_SHORTCUTS, DEFAULT_SHORTCUT_ENABLED, formatShortcut, normalizeShortcutEnabled, normalizeShortcuts, shortcutFromEvent, shortcutWarning,
   TRANSLATION_SHORTCUTS, type ShortcutEnabledSettings, type ShortcutSettings, type TranslationShortcut } from "../shared/shortcuts";
+import { setupLocalShortcutSettings } from "./local-shortcuts";
+import type { LocalShortcutSettings } from "../shared/local-shortcuts";
 
 export function setupShortcutSettings(root: HTMLElement): {
-  render: (value: unknown, enabled?: unknown) => void;
+  render: (value: unknown, enabled?: unknown, local?: unknown) => void;
   read: () => ShortcutSettings;
   readEnabled: () => ShortcutEnabledSettings;
+  readLocal: () => LocalShortcutSettings;
 } {
   const bindings = root.querySelector<HTMLElement>("#shortcutBindings")!;
   const status = root.querySelector<HTMLElement>("#shortcutStatus")!;
@@ -14,6 +17,7 @@ export function setupShortcutSettings(root: HTMLElement): {
   let enabled = { ...DEFAULT_SHORTCUT_ENABLED };
   let ready = false;
   let recording: TranslationShortcut | undefined;
+  let localControls: ReturnType<typeof setupLocalShortcutSettings> | undefined;
   const rows = new Map<TranslationShortcut, { input: HTMLInputElement; error: HTMLElement; reset: HTMLButtonElement }>();
   const switches = new Map<keyof ShortcutEnabledSettings, { button: HTMLButtonElement; row: HTMLElement }>();
 
@@ -24,7 +28,7 @@ export function setupShortcutSettings(root: HTMLElement): {
     button.setAttribute("role", "switch"); button.setAttribute("aria-label", `${label}快捷键`);
     switches.set(name, { button, row });
     button.addEventListener("click", () => {
-      if (!ready || (name in values && !values[name as TranslationShortcut])) return;
+      if (!ready || (name in values ? !values[name as TranslationShortcut] : localControls?.isEmpty(name as import("../shared/shortcuts").LocalShortcut))) return;
       enabled[name] = !enabled[name];
       recording = undefined;
       refresh();
@@ -34,6 +38,7 @@ export function setupShortcutSettings(root: HTMLElement): {
   }
 
   function refresh(): void {
+    localControls?.refresh(ready);
     for (const [name, row] of rows) {
       row.input.value = recording === name ? "" : formatShortcut(values[name], mac);
       row.input.placeholder = recording === name ? "请按下组合键…" : "未设置";
@@ -46,7 +51,7 @@ export function setupShortcutSettings(root: HTMLElement): {
       if (!row.input.hasAttribute("aria-invalid")) row.error.textContent = shortcutWarning(values[name]) ?? "";
     }
     for (const [name, { button, row }] of switches) {
-      const empty = name in values && !values[name as TranslationShortcut];
+      const empty = name in values ? !values[name as TranslationShortcut] : Boolean(localControls?.isEmpty(name as import("../shared/shortcuts").LocalShortcut));
       button.disabled = !ready || empty;
       button.setAttribute("aria-checked", String(enabled[name]));
       button.title = empty ? "请先设置快捷键，再启用" : enabled[name] ? "关闭快捷键，保留当前按键" : "开启快捷键";
@@ -56,8 +61,9 @@ export function setupShortcutSettings(root: HTMLElement): {
 
   function apply(name: TranslationShortcut, value: string): boolean {
     const row = rows.get(name)!;
-    const duplicate = value && TRANSLATION_SHORTCUTS.find(shortcut => shortcut.name !== name && values[shortcut.name] === value);
-    const error = duplicate ? `已用于「${duplicate.label}」，请换一个组合。` : "";
+    const duplicate = value ? TRANSLATION_SHORTCUTS.find(shortcut => shortcut.name !== name && values[shortcut.name] === value) : undefined;
+    const duplicateLabel = duplicate?.label ?? localControls?.conflict(value);
+    const error = duplicateLabel ? `已用于「${duplicateLabel}」，请换一个组合。` : "";
     row.error.textContent = error || "";
     if (error) { row.input.setAttribute("aria-invalid", "true"); status.textContent = error; return false; }
     row.input.removeAttribute("aria-invalid");
@@ -120,38 +126,30 @@ export function setupShortcutSettings(root: HTMLElement): {
     }, { signal: events.signal });
     reset.addEventListener("click", () => apply(shortcut.name, DEFAULT_SHORTCUTS[shortcut.name]), { signal: events.signal });
   }
-  const localBindings = root.querySelector<HTMLElement>("#localShortcutBindings")!;
-  for (const shortcut of LOCAL_SHORTCUTS) {
-    const row = document.createElement("div"); row.className = "shortcut-row shortcut-local-row";
-    const title = document.createElement("dt"); title.textContent = shortcut.label;
-    const actions = document.createElement("dd"); actions.className = "shortcut-local-controls";
-    const keys = document.createElement("span"); keys.className = "shortcut-local-keys";
-    for (const [index, key] of shortcut.keys.entries()) {
-      if (index) keys.append(document.createTextNode(shortcut.name === "floating-controls" ? " / " : "＋"));
-      const kbd = document.createElement("kbd");
-      kbd.textContent = key === "Ctrl" && mac && shortcut.name === "selection-submit" ? "Command" : key;
-      if (shortcut.name === "selection-submit" && index === 0) kbd.dataset.shortcutSubmit = "";
-      keys.append(kbd);
-    }
-    actions.append(keys, createSwitch(shortcut.name, shortcut.label, row));
-    row.append(title, actions); localBindings.append(row);
-  }
+  localControls = setupLocalShortcutSettings(root, {
+    status, createSwitch, getGlobal: () => values, signal: events.signal,
+    setEnabled: (name, value) => { enabled[name] = value; },
+    changed: () => { recording = undefined; refresh(); }
+  });
   root.querySelector<HTMLButtonElement>("#resetShortcuts")!.addEventListener("click", () => {
     values = { ...DEFAULT_SHORTCUTS }; recording = undefined;
     enabled = { ...DEFAULT_SHORTCUT_ENABLED };
+    localControls.reset();
     for (const row of rows.values()) { row.error.textContent = ""; row.input.removeAttribute("aria-invalid"); }
     refresh(); status.textContent = "已恢复默认快捷键，点击底部「保存」后生效。";
   }, { signal: events.signal });
   window.addEventListener("pagehide", event => { if (!event.persisted) events.abort(); }, { signal: events.signal });
   refresh();
   return {
-    render(value, activation) {
+    render(value, activation, local) {
       values = normalizeShortcuts(value); ready = true; recording = undefined;
-      enabled = normalizeShortcutEnabled(activation, values);
+      localControls!.render(local);
+      enabled = normalizeShortcutEnabled(activation, values, localControls!.read());
       for (const row of rows.values()) { row.error.textContent = ""; row.input.removeAttribute("aria-invalid"); }
       refresh(); status.textContent = "";
     },
     read: () => ({ ...values }),
-    readEnabled: () => ({ ...enabled })
+    readEnabled: () => ({ ...enabled }),
+    readLocal: () => localControls!.read()
   };
 }

@@ -8,19 +8,28 @@ import { sendRuntimeRequest } from "./runtime";
 import type { ExtensionSettings } from "../shared/types";
 import { setupAppearance } from "../shared/appearance-runtime";
 import { SETTINGS_KEY } from "../shared/defaults";
+import { normalizeShortcutEnabled } from "../shared/shortcuts";
+import { matchesParagraphClick, normalizeLocalShortcuts } from "../shared/local-shortcuts";
 
-export function activateFrameContent(documentKey: string) {
+export function activateFrameContent(documentKey: string, initialSettings?: ExtensionSettings) {
   injectContentStyles();
   initSelectionTranslation();
   const appearance = setupAppearance(undefined, { extensionPage: false });
-  void sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" }).then(settings => appearance.update(settings.appearance)).catch(() => {});
+  let localShortcuts = normalizeLocalShortcuts(undefined), shortcutEnabled = normalizeShortcutEnabled(undefined), revision = 0;
+  const applySettings = (settings: ExtensionSettings) => {
+    appearance.update(settings.appearance);
+    localShortcuts = normalizeLocalShortcuts(settings.localShortcuts);
+    shortcutEnabled = normalizeShortcutEnabled(settings.shortcutEnabled, settings.shortcuts, localShortcuts);
+  };
+  if (initialSettings) applySettings(initialSettings);
+  void sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" }).then(settings => { if (!revision) applySettings(settings); }).catch(() => {});
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[SETTINGS_KEY]?.newValue) appearance.update((changes[SETTINGS_KEY].newValue as ExtensionSettings).appearance);
+    if (area === "local" && changes[SETTINGS_KEY]?.newValue) { revision++; applySettings(changes[SETTINGS_KEY].newValue as ExtensionSettings); }
   });
   let paragraph = false;
   let pending = false;
   document.addEventListener("click", event => {
-    if (!paragraph || !event.ctrlKey || event.button !== 0 || event.defaultPrevented || pending) return;
+    if (!paragraph || !shortcutEnabled["paragraph-click"] || !matchesParagraphClick(event, localShortcuts["paragraph-click"]) || pending) return;
     const element = event.composedPath().find(node => node instanceof Element) as Element | undefined;
     if (element?.closest("input,textarea,select,[contenteditable]:not([contenteditable='false'])")) return;
     const target = findTranslatableParagraph(element ?? null);

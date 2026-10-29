@@ -184,6 +184,7 @@ export interface ExtensionSettings {
   frameTranslation?: import("./frame-session").FrameTranslationSettings;
   videoTranslation?: VideoTranslationSettings;
   shortcuts?: ShortcutSettings;
+  localShortcuts?: import("./local-shortcuts").LocalShortcutSettings;
   shortcutEnabled?: ShortcutEnabledSettings;
   appearance?: AppearanceSettings;
   selectionTranslation?: SelectionTranslationSettings;

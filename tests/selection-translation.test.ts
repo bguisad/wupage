@@ -41,6 +41,22 @@ afterEach(() => {
 });
 
 describe("selection dictionary UI", () => {
+  it("applies custom submission and dismissal immediately without intercepting normal editor input", async () => {
+    await show(); open(); await vi.waitFor(() => expect(card().hidden).toBe(false));
+    controller.updateShortcuts(undefined, { "selection-submit": "Alt+Enter", "dismiss-overlays": "Alt+Escape" });
+    edit("Another sentence for translation.");
+    vi.mocked(sendRuntimeRequest).mockClear();
+    source().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+    source().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", altKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(sendRuntimeRequest).toHaveBeenCalledWith(expect.objectContaining({ type: "TRANSLATE_BATCH" })));
+    source().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(card().hidden).toBe(false);
+    source().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", altKey: true, isComposing: true, bubbles: true }));
+    expect(card().hidden).toBe(false);
+    source().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", altKey: true, bubbles: true }));
+    expect(card().hidden).toBe(true);
+  });
   it("opens directly from an immediate keyboard selection without waiting for entry points", async () => {
     select(); controller.openFromShortcut();
     await vi.waitFor(() => expect(root().querySelector(".meanings")?.textContent).toContain("例子"));

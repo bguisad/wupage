@@ -1,3 +1,5 @@
+import { normalizeLocalShortcuts } from "./local-shortcuts";
+
 export const TRANSLATION_SHORTCUTS = [
   { name: "toggle-page-translation", label: "翻译全文 / 恢复原文" },
   { name: "translate-selection", label: "段落翻译" },
@@ -89,10 +91,12 @@ export function formatShortcut(value: string, mac = false): string {
   return value.split("+").map(key => key === "Meta" ? (mac ? "Command" : "Win") : key === "Alt" && mac ? "Option" : key).join("＋");
 }
 
-export function normalizeShortcutEnabled(value: unknown, bindings?: unknown): ShortcutEnabledSettings {
+export function normalizeShortcutEnabled(value: unknown, bindings?: unknown, localBindings?: unknown): ShortcutEnabledSettings {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const shortcuts = normalizeShortcuts(bindings);
+  const local = normalizeLocalShortcuts(localBindings);
   return Object.fromEntries([...TRANSLATION_SHORTCUTS, ...LOCAL_SHORTCUTS].map(({ name }) => [
-    name, input[name] !== false && (!(name in shortcuts) || Boolean(shortcuts[name as TranslationShortcut]))
+    name, input[name] !== false && (name in shortcuts ? Boolean(shortcuts[name as TranslationShortcut])
+      : name === "floating-controls" ? Boolean(local["floating-activate"] || local["floating-menu"]) : Boolean(local[name as Exclude<LocalShortcut, "floating-controls">]))
   ])) as ShortcutEnabledSettings;
 }

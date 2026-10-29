@@ -36,15 +36,19 @@ export async function openExtensionBrowser(root, output, firefox = false) {
         resize: async (width, height) => {
           await select(page); await browser.command('WebDriver:SetWindowRect', { width, height });
         },
-        pointer: async actions => {
+        pointer: async (actions, modifiers = []) => {
           await select(page);
-          await browser.command('WebDriver:PerformActions', { actions: [{ type: 'pointer', id: 'mouse', parameters: { pointerType: 'mouse' },
+          const keys = modifiers.map(key => ({ Control: '\uE009', Alt: '\uE00A', Shift: '\uE008', Meta: '\uE03D' })[key]);
+          if (keys.length) await browser.command('WebDriver:PerformActions', { actions: [{ type: 'key', id: 'keyboard', actions: keys.map(value => ({ type: 'keyDown', value })) }] });
+          try { await browser.command('WebDriver:PerformActions', { actions: [{ type: 'pointer', id: 'mouse', parameters: { pointerType: 'mouse' },
             actions: actions.map(action => action.type === 'move' ? { type: 'pointerMove', origin: 'viewport', x: Math.round(action.x), y: Math.round(action.y), duration: 80 }
-              : { type: action.type === 'down' ? 'pointerDown' : 'pointerUp', button: 0 }) }] });
+              : { type: action.type === 'down' ? 'pointerDown' : 'pointerUp', button: 0 }) }] }); }
+          finally { if (keys.length) await browser.command('WebDriver:PerformActions', { actions: [{ type: 'key', id: 'keyboard', actions: keys.reverse().map(value => ({ type: 'keyUp', value })) }] }); }
         },
         press: async combination => {
           await select(page);
-          const modifiers = { Alt: '\uE00A', Shift: '\uE008', Control: '\uE009', Meta: '\uE03D', Escape: '\uE00C' };
+          const modifiers = { Alt: '\uE00A', Shift: '\uE008', Control: '\uE009', Meta: '\uE03D', Escape: '\uE00C',
+            Enter: '\uE007', Space: '\uE00D', ArrowDown: '\uE015', Delete: '\uE017', Tab: '\uE004', Backspace: '\uE003' };
           const keys = combination.split('+').map(key => modifiers[key] || key.toLowerCase());
           await browser.command('WebDriver:PerformActions', { actions: [{ type: 'key', id: 'keyboard', actions: [
             ...keys.map(value => ({ type: 'keyDown', value })), ...[...keys].reverse().map(value => ({ type: 'keyUp', value }))
@@ -83,12 +87,13 @@ export async function openExtensionBrowser(root, output, firefox = false) {
       navigate: url => page.goto(url),
       capture: name => page.screenshot({ path: path.join(output, name) }),
       resize: (width, height) => page.setViewportSize({ width, height }),
-      pointer: async actions => {
-        for (const action of actions) {
+      pointer: async (actions, modifiers = []) => {
+        for (const key of modifiers) await page.keyboard.down(key);
+        try { for (const action of actions) {
           if (action.type === 'move') await page.mouse.move(action.x, action.y, { steps: 6 });
           else if (action.type === 'down') await page.mouse.down();
           else await page.mouse.up();
-        }
+        } } finally { for (const key of [...modifiers].reverse()) await page.keyboard.up(key); }
       },
       press: async combination => { await page.bringToFront(); await page.keyboard.press(combination); },
       download: async (source, destination) => {

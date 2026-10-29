@@ -136,6 +136,7 @@ try {
     const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
   });
   await press('Alt+Shift+Q'); await page.locator('.wupage-translation').first().waitFor();
+  await page.waitForFunction(() => document.querySelector('.wupage-translation')?.textContent.includes('译文'));
   assert.match(await page.locator('.wupage-translation').first().textContent(), /译文/);
   assert.equal(await page.locator('.wupage-translation').first().getAttribute('data-wupage-translation-target'), await page.locator('#selection').getAttribute('data-wupage-target-id'));
   assert.equal(await page.locator('#paragraph').getAttribute('data-wupage-target-id'), null);

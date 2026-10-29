@@ -19,6 +19,7 @@ import { observeParagraphMode } from "../shared/paragraph-mode";
 import { normalizeVideoTranslation } from "../shared/video";
 import { normalizeAppearance } from "../shared/appearance";
 import { applyPopupMenuLayout } from "../shared/popup-menu";
+import { paragraphClickHint } from "../shared/local-shortcuts";
 
 renderUiIcons();
 
@@ -696,6 +697,8 @@ async function toggleVideoTranslation(): Promise<void> {
 }
 
 function updateParagraphModeButton(): void {
+  const hint = paragraphClickHint(settings.localShortcuts, settings.shortcutEnabled?.["paragraph-click"] !== false);
+  if (paragraphModeHint.textContent !== hint) paragraphModeHint.textContent = hint;
   const value = String(paragraphMode);
   if (paragraphModeButton.getAttribute("aria-pressed") !== value) paragraphModeButton.setAttribute("aria-pressed", value);
   const hideHint = !paragraphMode || paragraphModeButton.hidden || paragraphModeButton.hasAttribute("data-popup-menu-hidden");

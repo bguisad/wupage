@@ -27,7 +27,7 @@ if (window !== window.top && !scope.__wupageFrameBootstrap) {
   const ready = Promise.all([domReady, visibility.ready]);
   const activate = () => worker ??= ready.then(async () => {
     const module = await import(/* @vite-ignore */ chrome.runtime.getURL("frame-content.js"));
-    const runtime = module.activateFrameContent(documentKey);
+    const runtime = module.activateFrameContent(documentKey, current?.settings);
     runtime.paragraph(paragraphMode && !!current && allowed(current));
     return runtime;
   }).catch(error => { worker = undefined; throw error; });

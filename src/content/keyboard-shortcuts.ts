@@ -3,7 +3,7 @@ import { normalizeShortcutEnabled, normalizeShortcuts, shortcutFromEvent, TRANSL
 import type { ExtensionSettings } from "../shared/types";
 import { sendRuntimeRequest } from "./runtime";
 
-const EDITABLE = "input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='textbox'],[role='combobox'],#wupage-selection-tools";
+const EDITABLE = "input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='textbox'],[role='combobox'],#wupage-selection-tools,#wupage-floating-hitbox,#wupage-floating-menu";
 
 export class KeyboardShortcutController {
   private bindings?: ShortcutSettings;

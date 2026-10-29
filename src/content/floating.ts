@@ -30,6 +30,7 @@ import {
 import { SETTINGS_KEY } from "../shared/defaults";
 import { TRANSLATION_DISPLAY_MODES } from "../shared/display-modes";
 import { translateParagraph } from "./paragraph-translation";
+import { matchesLocalShortcut, matchesParagraphClick, normalizeLocalShortcuts, paragraphClickHint } from "../shared/local-shortcuts";
 import { normalizeShortcutEnabled } from "../shared/shortcuts";
 import { createSettingsSnapshot } from "../shared/settings-snapshot";
 import { isLikelyPdfUrl } from "../pdf/launch";
@@ -80,6 +81,7 @@ let paragraphModeRevision = 0;
 let unsubscribeParagraphMode: (() => void) | undefined;
 let floatingBallEnabled = true;
 let shortcutEnabled = normalizeShortcutEnabled(undefined);
+let localShortcuts = normalizeLocalShortcuts(undefined);
 let settingsSnapshot = createSettingsSnapshot(readSettings);
 let debugRefreshTimer: number | undefined;
 let debugDragging = false;
@@ -141,13 +143,17 @@ export function initFloatingBall(): void {
     if (shortcutEnabled["floating-controls"] && button.matches(":focus-visible")) openMenu();
   });
   button.addEventListener("keydown", (event) => {
-    if (!shortcutEnabled["floating-controls"] && ["Enter", " ", "ArrowDown"].includes(event.key)) {
-      event.preventDefault(); return;
+    if (event.isComposing || event.keyCode === 229) return;
+    const activate = shortcutEnabled["floating-controls"] && matchesLocalShortcut(event, localShortcuts["floating-activate"]);
+    const menu = shortcutEnabled["floating-controls"] && matchesLocalShortcut(event, localShortcuts["floating-menu"]);
+    // Suppress native button activation after changing or disabling its keyboard binding.
+    if (["Enter", " ", "ArrowDown"].includes(event.key) || activate || menu) event.preventDefault();
+    if (event.repeat) return;
+    if (activate) { event.stopPropagation(); void togglePageTranslationFromFloating(); }
+    else if (menu) {
+      event.stopPropagation(); openMenu();
+      document.querySelector<HTMLSelectElement>("#wupage-floating-menu select")?.focus();
     }
-    if (event.key !== "ArrowDown") return;
-    event.preventDefault();
-    openMenu();
-    document.querySelector<HTMLSelectElement>("#wupage-floating-menu select")?.focus();
   });
   hitbox.addEventListener("pointerenter", (event) => {
     touchInteraction = event.pointerType === "touch";
@@ -179,11 +185,12 @@ export function initFloatingBall(): void {
   window.addEventListener("scroll", updateHighlight, { passive: true });
   document.addEventListener("click", closeMenuOnOutsideClick, true);
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || event.isComposing || !shortcutEnabled["dismiss-overlays"]) return;
+    if (!shortcutEnabled["dismiss-overlays"] || !matchesLocalShortcut(event, localShortcuts["dismiss-overlays"])) return;
     cancelMenuOpen();
     cancelLongPress();
     const menu = document.getElementById("wupage-floating-menu");
     if (!menu || menu.hidden) return;
+    event.preventDefault();
     if (menu.contains(document.activeElement)) button.focus({ preventScroll: true });
     setMenuOpen(menu, false);
   });
@@ -212,7 +219,8 @@ function subscribeToPositionChanges(button: HTMLElement): void {
     const settings = changes[SETTINGS_KEY]?.newValue as ExtensionSettings | undefined;
     if (settings) {
       settingsSnapshot.receive(settings);
-      shortcutEnabled = normalizeShortcutEnabled(settings.shortcutEnabled, settings.shortcuts);
+      localShortcuts = normalizeLocalShortcuts(settings.localShortcuts);
+      shortcutEnabled = normalizeShortcutEnabled(settings.shortcutEnabled, settings.shortcuts, localShortcuts);
       if (!shortcutEnabled["paragraph-click"]) setActiveParagraph(null);
       floatingBallEnabled = settings.floatingBallEnabled;
       applyFloatingBallVisibility();
@@ -255,7 +263,7 @@ async function translateActiveParagraph(): Promise<void> {
 }
 
 function handleDocumentClick(event: MouseEvent): void {
-  if (!paragraphMode || !event.ctrlKey || !shortcutEnabled["paragraph-click"]) return;
+  if (!paragraphMode || !shortcutEnabled["paragraph-click"] || !matchesParagraphClick(event, localShortcuts["paragraph-click"])) return;
   const target = event.target instanceof Element ? event.target : null;
   if (!target || target.closest(`#${FLOATING_ID}, #${FLOATING_HITBOX_ID}, .wupage-translation`)) return;
   if (target.closest("#wupage-floating-menu")) return;
@@ -1307,7 +1315,8 @@ export async function setParagraphMode(enabled: boolean, broadcast = true): Prom
 
 async function syncFloatingBallFromSettings(): Promise<void> {
   const settings = await getSettings();
-  shortcutEnabled = normalizeShortcutEnabled(settings.shortcutEnabled, settings.shortcuts);
+  localShortcuts = normalizeLocalShortcuts(settings.localShortcuts);
+  shortcutEnabled = normalizeShortcutEnabled(settings.shortcutEnabled, settings.shortcuts, localShortcuts);
   floatingBallEnabled = settings.floatingBallEnabled;
   const menu = document.getElementById("wupage-floating-menu");
   if (menu) applyMenuSettings(menu, settings);
@@ -1426,7 +1435,11 @@ function syncParagraphModeButton(menu: HTMLElement): void {
   const button = menu.querySelector<HTMLButtonElement>('[data-action="paragraph-mode"]');
   button?.setAttribute("aria-pressed", String(paragraphMode));
   const hint = menu.querySelector<HTMLElement>(".wupage-menu-hint");
-  if (hint) hint.hidden = !paragraphMode || button?.hidden === true;
+  if (hint) {
+    hint.hidden = !paragraphMode || button?.hidden === true;
+    const text = paragraphClickHint(localShortcuts, shortcutEnabled["paragraph-click"]);
+    if (hint.textContent !== text) hint.textContent = text;
+  }
 }
 
 async function toggleMenuParagraphMode(menu: HTMLElement, button: HTMLButtonElement): Promise<void> {

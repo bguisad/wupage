@@ -5,6 +5,7 @@ import type { ExtensionSettings, TranslateBatchResponse } from "../shared/types"
 import { sendRuntimeRequest } from "./runtime";
 import { SELECTION_TRANSLATION_STYLES } from "./selection-translation-styles";
 import { normalizeShortcutEnabled } from "../shared/shortcuts";
+import { formatLocalShortcut, matchesLocalShortcut, normalizeLocalShortcuts } from "../shared/local-shortcuts";
 import { uiIconMarkup } from "../shared/ui-icons";
 
 const HOST_ID = "wupage-selection-tools";
@@ -13,6 +14,7 @@ const EXCLUDED = "input,textarea,select,button,[contenteditable]:not([contentedi
 export class SelectionTranslationController {
   private settings: SelectionTranslationSettings;
   private shortcutEnabled = normalizeShortcutEnabled(undefined);
+  private localShortcuts = normalizeLocalShortcuts(undefined);
   private host: HTMLElement;
   private root: ShadowRoot;
   private triggers: HTMLElement;
@@ -78,8 +80,8 @@ export class SelectionTranslationController {
     this.word.addEventListener("focus", () => this.resizeSourceEditor());
     this.word.addEventListener("keydown", event => {
       event.stopPropagation();
-      if (event.key === "Escape" && !event.isComposing && this.shortcutEnabled["dismiss-overlays"]) { this.close(); return; }
-      if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing && this.shortcutEnabled["selection-submit"]) {
+      if (this.shortcutEnabled["dismiss-overlays"] && matchesLocalShortcut(event, this.localShortcuts["dismiss-overlays"])) { event.preventDefault(); this.close(); return; }
+      if (this.shortcutEnabled["selection-submit"] && matchesLocalShortcut(event, this.localShortcuts["selection-submit"]) && !event.repeat) {
         event.preventDefault(); this.submitEditedText();
       }
     });
@@ -142,8 +144,9 @@ export class SelectionTranslationController {
     this.settings = settings;
   }
 
-  updateShortcuts(value: unknown): void {
-    this.shortcutEnabled = normalizeShortcutEnabled(value);
+  updateShortcuts(value: unknown, bindings?: unknown): void {
+    this.localShortcuts = normalizeLocalShortcuts(bindings);
+    this.shortcutEnabled = normalizeShortcutEnabled(value, undefined, this.localShortcuts);
     this.updateSourceAction();
   }
 
@@ -188,7 +191,7 @@ export class SelectionTranslationController {
     if (event.key.startsWith("Arrow") || event.key === "Shift" || event.key === "Home" || event.key === "End") this.scheduleSelection();
   };
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === "Escape" && !event.isComposing && this.shortcutEnabled["dismiss-overlays"]) this.close();
+    if (this.shortcutEnabled["dismiss-overlays"] && matchesLocalShortcut(event, this.localShortcuts["dismiss-overlays"])) { if (!this.card.hidden) event.preventDefault(); this.close(); }
   };
   private onScroll = (event: Event): void => { if (!this.owns(event)) this.close(); };
   private onResize = (): void => { this.close(); };
@@ -296,7 +299,7 @@ export class SelectionTranslationController {
   private updateSourceAction(): void {
     const action = isSingleDictionaryWord(this.word.value.trim()) ? "查词" : "翻译";
     this.submitSource.textContent = action;
-    this.submitSource.title = this.shortcutEnabled["selection-submit"] ? `${action}（Ctrl+Enter）` : action;
+    this.submitSource.title = this.shortcutEnabled["selection-submit"] ? `${action}（${formatLocalShortcut(this.localShortcuts["selection-submit"])}）` : action;
   }
 
   private submitEditedText(): void {
@@ -464,7 +467,7 @@ export async function translateSelectedText(): Promise<void> {
   const normalized = normalizeSelectionTranslation(settings.selectionTranslation);
   if (controller) controller.update(normalized);
   else controller = new SelectionTranslationController(normalized);
-  controller.updateShortcuts(settings.shortcutEnabled);
+  controller.updateShortcuts(settings.shortcutEnabled, settings.localShortcuts);
   controller.openFromShortcut();
 }
 
@@ -475,7 +478,7 @@ export function initSelectionTranslation(): void {
     const normalized = normalizeSelectionTranslation(settings?.selectionTranslation);
     if (controller) controller.update(normalized);
     else controller = new SelectionTranslationController(normalized);
-    controller.updateShortcuts(settings?.shortcutEnabled);
+    controller.updateShortcuts(settings?.shortcutEnabled, settings?.localShortcuts);
   };
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[SETTINGS_KEY]) return;

@@ -1083,3 +1083,14 @@ button.secondary {
 
 .language-chevron svg, .provider-chevron svg { display: block; width: 100%; height: 100%; }
 .language-direction svg { width: 15px; height: 15px; }
+
+.shortcut-row dd.shortcut-local-editor { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.shortcut-local-binding { display: flex; align-items: flex-end; gap: 4px; min-width: 0; max-width: 100%; }
+.shortcut-local-editor .shortcut-field > label { margin-bottom: 4px; font-size: 11px; color: var(--wp-muted); }
+.shortcut-local-editor .shortcut-field:has(select) { width: 210px; }
+.shortcut-local-editor select { width: 100%; min-height: 38px; min-width: 0; box-sizing: border-box; padding: 0 28px 0 10px; border: 1px solid var(--wp-border); border-radius: 6px; color: var(--wp-foreground); background-color: var(--wp-surface); font: inherit; font-size: 13px; }
+.shortcut-local-editor input { max-width: 180px; }
+.shortcut-local-editor [data-local-escape][hidden] { display: none; }
+@container settings (max-width: 640px) {
+  .shortcut-local-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+}

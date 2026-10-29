@@ -77,7 +77,7 @@ describe("translation shortcut actions", () => {
   it("toggles paragraph mode and explains its click gesture", async () => {
     mocks.paragraph.mockReturnValue(false);
     await execute("toggle-paragraph-mode");
-    expect(mocks.setParagraph).toHaveBeenCalledWith(true); expect(notice()).toContain("Ctrl");
+    expect(mocks.setParagraph).toHaveBeenCalledWith(true); expect(notice()).toContain("修饰键");
     mocks.paragraph.mockReturnValue(true);
     await execute("toggle-paragraph-mode"); expect(mocks.setParagraph).toHaveBeenLastCalledWith(false);
   });

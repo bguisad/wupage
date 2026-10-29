@@ -183,7 +183,7 @@ async function init(): Promise<void> {
 }
 
 function render(): void {
-  shortcutControls.render(settings.shortcuts, settings.shortcutEnabled);
+  shortcutControls.render(settings.shortcuts, settings.shortcutEnabled, settings.localShortcuts);
   appearanceControls.render(settings.appearance);
   autoTranslationControls.render(settings.autoTranslation);
   const frameTranslation = normalizeFrameTranslation(settings.frameTranslation);
@@ -916,6 +916,7 @@ function readSettingsFromForm(): ExtensionSettings {
     ...settings,
     appearance,
     shortcuts: shortcutControls.read(),
+    localShortcuts: shortcutControls.readLocal(),
     shortcutEnabled: shortcutControls.readEnabled(),
     autoTranslation: autoTranslationControls.read(),
     frameTranslation: normalizeFrameTranslation({ enabled: frameTranslationEnabled.checked,

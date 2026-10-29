@@ -23,7 +23,7 @@ export async function executeTranslationShortcut(command: TranslationShortcut): 
     else if (command === "toggle-paragraph-mode") {
       const enabled = !getParagraphMode();
       await setParagraphMode(enabled);
-      showShortcutNotice(enabled ? "段落模式已开启：按住 Ctrl 点击段落翻译，再次点击恢复原文。" : "段落模式已关闭。");
+      showShortcutNotice(enabled ? "段落模式已开启，按配置的修饰键点击段落即可翻译。" : "段落模式已关闭。");
     } else if (command === "cycle-display-mode") {
       // Rapid presses should advance from the last saved mode, not the same stale value.
       modeUpdate = modeUpdate.catch(() => undefined).then(cycleDisplayMode);

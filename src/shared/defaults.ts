@@ -2,9 +2,11 @@ import type { ExtensionSettings } from "./types";
 import { DEFAULT_SELECTION_TRANSLATION } from "./dictionary";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import { DEFAULT_SHORTCUTS, DEFAULT_SHORTCUT_ENABLED } from "./shortcuts";
+import { DEFAULT_LOCAL_SHORTCUTS } from "./local-shortcuts";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   shortcuts: { ...DEFAULT_SHORTCUTS },
+  localShortcuts: { ...DEFAULT_LOCAL_SHORTCUTS },
   shortcutEnabled: { ...DEFAULT_SHORTCUT_ENABLED },
   appearance: { ...DEFAULT_APPEARANCE, customSchemes: [] },
   selectionTranslation: { ...DEFAULT_SELECTION_TRANSLATION },
