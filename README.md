@@ -478,6 +478,4 @@ WuPage 开发交流 QQ 群：**582857596**，用于功能讨论、开发交流�
 
 ## 致谢
 
-豆包接入参考 [Haleclipse](https://github.com/Haleclipse) 的 CometixTranslate，来源：[Linux.do 原帖](https://linux.do/t/topic/2910452)。适配代码按 WuPage 架构独立实现。
-
 界面通用图标采用 Nieobie 的 [Game Icon Pack](https://github.com/Nieobie/game-icon-pack)（CC0 1.0），感谢作者的开源分享。
