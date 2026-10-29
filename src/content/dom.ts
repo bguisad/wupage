@@ -29,6 +29,7 @@ interface TrackedNode {
   sourceValue: string;
   sourceParent: Element;
   replaced?: boolean;
+  replacementValue?: string;
   commentPrefix?: string;
 }
 
@@ -184,6 +185,7 @@ const NAVIGATION_CONTAINER_SELECTOR = [
   "nav",
   "aside",
   "[role='navigation']",
+  "[task-menu]",
   KNOWN_COMPACT_NAV_SELECTOR
 ].join(",");
 const HEADING_SELECTOR = "h1,h2,h3,h4,h5,h6";
@@ -232,7 +234,7 @@ let trackedAttributes: TrackedAttribute[] = [];
 let trackedImageTexts: TrackedImageText[] = [];
 let protectedTokensById = new Map<string, ProtectedToken[]>();
 let sourceTextById = new Map<string, string>();
-const renderedById = new Map<string, HTMLElement>();
+const renderedById = new Map<string, HTMLElement | Text>();
 const translatedTextById = new Map<string, string>();
 const stableReplacementsById = new Map<string, StableReplacement>();
 const stableReplacementSources = new WeakSet<Element>();
@@ -305,7 +307,7 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
   }
   const changed = (tracked: TrackedNode): boolean => !tracked.node.isConnected
     || tracked.node.parentElement !== tracked.sourceParent
-    || tracked.node.data !== (tracked.replaced ? "" : tracked.sourceValue);
+    || tracked.node.data !== (tracked.replaced ? tracked.replacementValue ?? "" : tracked.sourceValue);
   for (const tracked of trackedNodes) {
     if (recovered.has(tracked.id)) continue;
     if (changed(tracked) || changedRoots.includes(tracked.node.parentElement!)) stale.add(tracked.id);
@@ -346,15 +348,14 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
   for (const tracked of trackedNodes) {
     if (!stale.has(tracked.id)) continue;
     // Never overwrite a new value supplied by the host application.
-    if (tracked.replaced && tracked.node.data === "") tracked.node.data = tracked.sourceValue;
+    if (tracked.replaced && tracked.node.data === (tracked.replacementValue ?? "")) tracked.node.data = tracked.sourceValue;
   }
   for (const group of trackedGroups) {
     if (stale.has(group.id)) restoreGroupedSource(group);
   }
   for (const id of stale) {
     restoreStableReplacement(id);
-    renderedById.get(id)?.remove();
-    renderedById.delete(id);
+    removeRenderedTranslation(id);
     removePendingForId(id);
     for (const token of protectedTokensById.get(id) ?? []) {
       restoreProtectedSource(token);
@@ -419,6 +420,7 @@ function recoverRewrittenReplacementSegments(): Set<string> {
   }
   for (const [id, oldNodes] of candidates) {
     const output = renderedById.get(id);
+    if (output instanceof Text) continue;
     const translation = translatedTextById.get(id);
     if (!translation || output?.getAttribute("data-wupage-display-mode") !== "replace"
       || (!stableReplacementsById.has(id) && !oldNodes.some((node) => node.replaced))) continue;
@@ -671,6 +673,10 @@ export function renderTranslations(
     removePendingForId(group.id);
     if (isSameTranslation(group.id, translation)) continue;
     const targetId = ensureTranslationTarget(block);
+    if (displayMode === "replace" && renderSlottedNavigationReplacement(group.id, group.nodes, block, translation)) {
+      block.setAttribute(TRANSLATED_ATTR, "true");
+      continue;
+    }
     const element = document.createElement("span");
     element.className = TRANSLATION_CLASS;
     element.dataset.wupageMode = group.mode;
@@ -706,6 +712,10 @@ export function renderTranslations(
 
     removePendingForId(tracked.id);
     if (isSameTranslation(tracked.id, translation)) continue;
+    if (displayMode === "replace" && renderSlottedNavigationReplacement(tracked.id, [tracked], parent, translation)) {
+      parent.setAttribute(TRANSLATED_ATTR, "true");
+      continue;
+    }
     const element = document.createElement("span");
     element.className = TRANSLATION_CLASS;
     element.dataset.wupageMode = tracked.mode;
@@ -764,10 +774,9 @@ export function renderTranslations(
 // new display inherit the source's color rather than the previous accent.
 export function setTranslationDisplayMode(displayMode: TranslationDisplayMode): void {
   invalidateStaleSegments();
-  for (const [id, output] of renderedById) {
+  for (const id of renderedById.keys()) {
     if (!translatedTextById.has(id)) continue;
-    output.remove();
-    renderedById.delete(id);
+    removeRenderedTranslation(id);
   }
   restoreReplacedSourcesIn(document.documentElement);
   renderTranslations([...translatedTextById].map(([id, text]) => ({ id, text })), displayMode);
@@ -1054,6 +1063,33 @@ function replaceTrackedSource(nodes: TrackedNode[], protectedTokenId?: string): 
   }
 }
 
+// Custom navigation items project their light-DOM labels through shadow slots.
+// Reuse the original Text node so replacement keeps its projection and cannot
+// turn into a separate menu child or displace an icon in another named slot.
+function renderSlottedNavigationReplacement(id: string, nodes: TrackedNode[], source: Element, text: string): boolean {
+  const item = source.closest("[role='listitem']");
+  if (protectedTokensById.has(id) || nodes.some(node => node.mode !== "inline")
+    || !item?.localName.includes("-") || !isCompactNavigationText(source)) return false;
+  const first = nodes.find(node => node.sourceValue.trim());
+  if (!first) return false;
+  removeRenderedTranslation(id);
+  for (const tracked of nodes) {
+    const value = tracked === first ? text : "";
+    tracked.replacementValue = value;
+    tracked.replaced = true;
+    if (tracked.node.data !== value) tracked.node.data = value;
+  }
+  renderedById.set(id, first.node);
+  return true;
+}
+
+function removeRenderedTranslation(id: string): void {
+  const rendered = renderedById.get(id);
+  // Original Text nodes belong to the page and must keep their identity.
+  if (rendered instanceof Element) rendered.remove();
+  renderedById.delete(id);
+}
+
 function restoreGroupedSource(group: TrackedGroup): void {
   if (!group.sourceHidden) return;
   group.block.classList.remove(REPLACED_SOURCE_CLASS);
@@ -1087,8 +1123,9 @@ function restoreReplacedSourcesIn(root: Element): void {
   for (const tracked of trackedNodes) {
     if (!tracked.replaced || !tracked.node.parentElement) continue;
     if (tracked.node.parentElement !== root && !root.contains(tracked.node.parentElement)) continue;
-    if (tracked.node.data === "") tracked.node.data = tracked.sourceValue;
+    if (tracked.node.data === (tracked.replacementValue ?? "")) tracked.node.data = tracked.sourceValue;
     tracked.replaced = false;
+    tracked.replacementValue = undefined;
   }
   for (const tokens of protectedTokensById.values()) {
     for (const token of tokens) {

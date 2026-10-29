@@ -28,6 +28,8 @@
 
 邮件列表等单行省略区域在 `src/content/dom.ts` 中按原有文字字段分组，主题和摘要保留在裁剪容器内；行内译文继承页面的换行规则。构建后运行 `npm run test:mail-layout`、`npm run test:mail-layout:edge` 和 `npm run test:mail-layout:firefox`，使用本地模拟邮件和独立浏览器配置检查表格与 ARIA Grid 的行高、列宽、主题和摘要分离、时间不折行、加载状态、动态新增行、复选框交互、正文换行及原文恢复。不会访问真实邮箱；截图和报告位于 `.npm-cache/mail-layout/<browser>/`。
 
+自定义任务菜单通过 `[task-menu]` 识别，各个 `[role="listitem"]` 独立采集；包含列表项的外层 div 不作为正文聚合。自定义菜单项在译文替换模式下复用原有 Text 节点，并记录实际替换值，保持 Shadow DOM 插槽、状态图标及宿主更新后的正确恢复。构建后运行 `npm run test:task-menu`、`npm run test:task-menu:edge` 和 `npm run test:task-menu:firefox`，使用脱敏后的 Partner Center 菜单结构和本地组件检查开放与封闭 Shadow DOM、两种窗口宽度、三种显示模式、逐项可见性、选中交互及节点还原。每个浏览器运行 16 组检查，产物保存在 `.npm-cache/task-menu/<browser>/`；不访问已登录的商店页面。
+
 ### 旧式论文页面翻译
 
 `src/content/legacy-scientific.ts` 识别 LaTeX2HTML 生成标记，将页面根节点下连续的行内内容临时组织为段落，并在清理时还原原始节点。正文中的公式图片和数字引用使用已有的受保护标记协议，译文复用公式图片和引用链接；独立公式、编号和公式图片的替代文本不送去翻译。

@@ -1,6 +1,6 @@
 {
   "name": "wupage",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,6 +20,9 @@
     "test:mail-layout": "node scripts/test-mail-layout.mjs",
     "test:mail-layout:edge": "node scripts/test-mail-layout.mjs --edge",
     "test:mail-layout:firefox": "node scripts/test-mail-layout.mjs --firefox",
+    "test:task-menu": "node scripts/test-task-menu.mjs",
+    "test:task-menu:edge": "node scripts/test-task-menu.mjs --edge",
+    "test:task-menu:firefox": "node scripts/test-task-menu.mjs --firefox",
     "test:auto": "node scripts/test-auto-translation.mjs",
     "test:spa": "node scripts/test-spa-translation.mjs",
     "test:spa:edge": "node scripts/test-spa-translation.mjs --edge",

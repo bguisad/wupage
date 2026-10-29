@@ -9,7 +9,7 @@ export function isDivProseBlock(element: Element): boolean {
   if (!element.matches("div") || !element.closest(READABLE_ROOT_SELECTOR)
     || element.querySelector(
       "div,p,h1,h2,h3,h4,h5,h6,li,table,ul,ol,blockquote,section,article,header,footer,aside,nav,"
-      + "button,input,textarea,select,[role='button'],[contenteditable]"
+      + "button,input,textarea,select,[role='button'],[role='listitem'],[contenteditable]"
     )) return false;
   // Flex/grid children are separate layout fields, even when authored as spans.
   // Merging a title and its author moves the translation out of both fields and
