@@ -32,18 +32,37 @@ export interface PdfExportScene {
   unchanged: boolean;
 }
 
-export async function buildSearchablePdf(pages: RasterPdfPage[], title: string, sourceBytes?: Uint8Array,
-  fontBytes?: Uint8Array): Promise<Uint8Array> {
+export async function buildSearchablePdf(pages: RasterPdfPage[], title: string, sourceBytes: Uint8Array | undefined,
+  fontBytes: Uint8Array): Promise<Uint8Array> {
   const output = await PDFDocument.create();
   output.setTitle(title);
   output.setCreator("WuPage");
   output.setProducer("WuPage PDF Translator");
   output.registerFontkit({ create: (data) => {
     const font = fontkit.create(data);
-    return "getVariation" in font ? (font.getVariation as (axes: Record<string, number>) => typeof font)({ wght: 400 }) : font;
+    const createSubset = font.createSubset.bind(font);
+    font.createSubset = () => {
+      const subset = createSubset();
+      if (!("cff" in subset) || !subset.cff) return subset;
+      const encodeStream = subset.encodeStream.bind(subset);
+      subset.encodeStream = () => {
+        const stream = encodeStream();
+        let offset = 0;
+        stream.on("data", (chunk: Uint8Array) => {
+          // fontkit 1.1.1 writes this.cff.length as the CFF header offSize.
+          // The header allows only 1..4; 4 matches the upstream font and
+          // keeps stricter PDF readers from rejecting otherwise valid data.
+          if (offset <= 3 && offset + chunk.length > 3 && chunk[3 - offset] > 4) chunk[3 - offset] = 4;
+          offset += chunk.length;
+        });
+        return stream;
+      };
+      return subset;
+    };
+    return font;
   } });
   const hasText = pages.some((page) => !page.scene?.unchanged && page.scene?.text.length);
-  const font = hasText ? await output.embedFont(fontBytes ?? await fetchExportFont(), { subset: true }) : undefined;
+  const font = hasText ? await output.embedFont(fontBytes, { subset: true }) : undefined;
   const original = sourceBytes ? await PDFDocument.load(sourceBytes) : undefined;
   const graphics = sourceBytes ? await PDFDocument.load(sourceBytes) : undefined;
   const optionalLayers = graphics?.catalog.has(PDFName.of("OCProperties"));
@@ -94,12 +113,6 @@ export async function buildSearchablePdf(pages: RasterPdfPage[], title: string, 
     page.pushOperators(endText(), popGraphicsState());
   }
   return output.save({ useObjectStreams: true });
-}
-
-async function fetchExportFont(): Promise<Uint8Array> {
-  const response = await fetch(chrome.runtime.getURL("pdf-fonts/NotoSansCJKsc-VF.ttf"));
-  if (!response.ok) throw new Error("无法读取 PDF 导出字体，请重新加载扩展后重试。");
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 function stripPageText(page: PDFPage, rewritten: Map<PDFRawStream, PDFRef>): boolean {

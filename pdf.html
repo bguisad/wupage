@@ -38,6 +38,7 @@
           </label>
           <button id="replaceDocument" type="button" class="ghost-button" hidden>打开新文档</button>
           <button id="downloadDocument" type="button" class="ghost-button" hidden disabled>下载译文</button>
+          <button id="pdfFontAction" type="button" class="pdf-font-action" hidden aria-label="安装 PDF 导出完整字体包" title="安装 PDF 导出完整字体包"><span data-wupage-icon="wrench" aria-hidden="true"></span></button>
           <button id="translateDocument" type="button" class="primary-button" disabled>
               <span>翻译附近页面</span>
           </button>
@@ -101,6 +102,19 @@
         </div>
       </div>
 
+      <dialog id="pdfFontDialog" class="pdf-font-dialog" aria-labelledby="pdfFontTitle" aria-describedby="pdfFontDescription">
+        <h2 id="pdfFontTitle">安装完整字体，提升导出效果</h2>
+        <p id="pdfFontDescription">安装后，译文可以搜索、复制，放大更清晰，并尽可能保留矢量图形。字体只需下载一次，之后可离线使用。</p>
+        <p>暂不安装也能导出图像版 PDF，外观与预览一致，但文字无法选中或搜索。</p>
+        <p id="pdfFontSize" class="pdf-font-size"></p>
+        <progress id="pdfFontProgress" hidden aria-label="字体包下载进度"></progress>
+        <p id="pdfFontStatus" class="pdf-font-status" role="status" aria-live="polite"></p>
+        <div class="pdf-font-actions">
+          <button id="pdfFontClose" type="button" class="ghost-button">取消</button>
+          <button id="pdfFontBasic" type="button" class="ghost-button">直接导出</button>
+          <button id="pdfFontInstall" type="button" class="primary-button">安装并导出</button>
+        </div>
+      </dialog>
       <div class="status-toast" id="statusToast" role="status" aria-live="polite" hidden></div>
     </div>
   </body>

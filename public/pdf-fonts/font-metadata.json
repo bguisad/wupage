@@ -2,15 +2,21 @@
   "repository": "https://github.com/notofonts/noto-cjk",
   "revision": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
   "files": {
-    "NotoSansCJKsc-VF.ttf": {
-      "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf",
-      "sha256": "990c807e79c25662a5a9ecf7f971baeb2bf2eab9a559e5ecf15cdfdb8561d21f",
-      "bytes": 36144788
-    },
     "OFL.txt": {
       "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
       "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
       "bytes": 4301
     }
+  },
+  "font": {
+    "file": "NotoSansCJKsc-Regular.otf",
+    "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+    "bytes": 16437364
+  },
+  "coverage": {
+    "unicodeCodePoints": 44810,
+    "glyphs": 65535,
+    "unicodeSha256": "8aa3489602a44e0737c9a7f2392859d176bb5a892257457844d1e24f49f314a2"
   }
 }

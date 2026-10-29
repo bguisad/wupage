@@ -25,10 +25,11 @@ describe("searchable PDF export", () => {
     page.drawText("Original words must be removed.", { x: 30, y: 420, size: 12, font: latin });
     page.drawLine({ start: { x: 20, y: 100 }, end: { x: 300, y: 150 }, thickness: 2 });
     const png = new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
-    const fontBytes = new Uint8Array(await readFile("public/pdf-fonts/NotoSansCJKsc-VF.ttf"));
+    const fontBytes = new Uint8Array(await readFile("tests/fixtures/pdf-export-font.otf"));
     const bytes = await buildSearchablePdf([{ width: 400, height: 500, imageBytes: png, format: "png", scene: {
-      unchanged: false, transform: [1, 0, 0, -1, 0, 500], images: [], text: [{ text: "中文译文 日本語 한국어 Русский", x: 30, y: 80, size: 12, width: 250, color: [0, 0, 0] }]
+      unchanged: false, transform: [1, 0, 0, -1, 0, 500], images: [], text: [{ text: "中文译文 繁體𠮷 日本語 한국어 Русский Ελληνικα", x: 30, y: 80, size: 12, width: 250, color: [0, 0, 0] }]
     } }], "Searchable translation", await source.save(), fontBytes);
+    expect(bytes.byteLength).toBeLessThan(100_000);
     const exported = await PDFDocument.load(bytes);
     expect(exported.getPageCount()).toBe(1);
     const streams = exported.context.enumerateIndirectObjects().flatMap(([, object]) => object instanceof PDFRawStream
@@ -36,10 +37,19 @@ describe("searchable PDF export", () => {
     expect(streams.some((text) => text.includes("beginbfchar"))).toBe(true);
     expect(streams.some((text) => text.includes(" m\n") && text.includes(" l\n"))).toBe(true);
     expect(exported.getPage(0).node.Resources()?.lookupMaybe(PDFName.of("Font"), PDFDict)).toBeDefined();
+    const cffStreams = exported.context.enumerateIndirectObjects().flatMap(([, object]) => object instanceof PDFRawStream
+      && object.dict.get(PDFName.of("Subtype")) === PDFName.of("CIDFontType0C") ? [object] : []);
+    expect(cffStreams.length).toBeGreaterThan(0);
+    for (const stream of cffStreams) {
+      const header = decodePDFRawStream(stream).decode().slice(0, 4);
+      expect(header[0]).toBe(1);
+      expect(header[3]).toBeGreaterThanOrEqual(1);
+      expect(header[3]).toBeLessThanOrEqual(4);
+    }
     const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const loading = getDocument({ data: bytes.slice() }), pdf = await loading.promise;
     const text = (await (await pdf.getPage(1)).getTextContent()).items.flatMap((item) => "str" in item ? [item.str] : []).join("");
-    expect(text).toBe("中文译文 日本語 한국어 Русский");
+    expect(text).toBe("中文译文 繁體𠮷 日本語 한국어 Русский Ελληνικα");
     expect(text).not.toContain("Original words");
     await loading.destroy();
   }, 20000);

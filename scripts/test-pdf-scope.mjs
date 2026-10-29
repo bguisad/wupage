@@ -138,6 +138,8 @@ try {
     await reader.bringToFront();
     const downloadEvent = reader.waitForEvent("download", { timeout: 90_000 });
     await reader.evaluate(() => document.querySelector("#downloadDocument").click());
+    await reader.waitForFunction(() => document.querySelector("#pdfFontDialog").open || !document.querySelector("#downloadDocument").textContent.includes("选择导出方式"));
+    if (await reader.locator("#pdfFontDialog").evaluate(dialog => dialog.open)) await reader.locator("#pdfFontBasic").click();
     const downloaded = await downloadEvent;
     const pdf = path.join(output, name);
     await downloaded.saveAs(pdf);

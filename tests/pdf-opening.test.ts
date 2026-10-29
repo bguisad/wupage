@@ -3,6 +3,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/pdf/font-control", () => ({ setupPdfFontControl: () => ({
+  prepareExport: async () => ({}), setExporting: vi.fn(), cancel: vi.fn()
+}) }));
 import { DEFAULT_SETTINGS } from "../src/shared/defaults";
 import type { RuntimeRequest, RuntimeResponse } from "../src/shared/types";
 

@@ -1,6 +1,6 @@
 # WuPage Privacy Policy
 
-Effective date: October 29, 2026
+Effective date: October 30, 2026
 
 WuPage is a Firefox, Microsoft Edge and Chromium-compatible browser extension that translates webpage text, selected text, recognized image text and PDF text using a translation provider selected and configured by the user.
 
@@ -8,6 +8,7 @@ WuPage is a Firefox, Microsoft Edge and Chromium-compatible browser extension th
 
 WuPage processes the following data only to provide its translation functionality:
 
+- **Optional PDF export fonts:** Reading and translating PDFs does not download fonts. On export, users can explicitly install the approximately 16.4 MB complete font from Noto's official GitHub repository (`raw.githubusercontent.com`), or export an image-only PDF without installing it. The download omits cookies and provider credentials and sends no document content; the host receives ordinary request metadata such as the network IP address. Font data is verified by size and SHA-256 before being saved in extension Cache Storage for offline reuse. The adjacent font control can install or remove it. Clearing translation results does not delete fonts. Font processing code is bundled; only font data is downloaded.
 - **Website content:** When the user requests a page or paragraph translation, WuPage reads the relevant text from the current webpage. Online providers receive that text for translation. With the experimental Firefox local provider selected, text is processed on the device using Bergamot; it is not sent to an online translation service. This content can include text the user is viewing on the page.
 - **Video subtitles:** After the user starts subtitle translation, WuPage reads existing player subtitle tracks, rendered text captions, or an SRT/WebVTT file explicitly imported by the user. Site-specific adapters may request the active video's subtitle catalogue and subtitle files from that site's own services using the page's existing authorization; they do not send that authorization to a translation provider. On supported players, WuPage may turn on native captions and restores its change when stopped. Current subtitles and, when a complete timeline is available, approximately 15 seconds of upcoming subtitle text are processed by the selected text provider, including while paused. Online providers receive subtitle text and their own configured authentication information; with the local provider, translation stays on the device. Automatic activation for a site is off by default and requires the user's explicit choice. WuPage does not capture video audio, microphone input, or video frames for this feature. Imported files are parsed locally and retained only in page memory until a video change or page refresh. Subtitle translations use a bounded session cache and are not written to the persistent translation cache; temporary Debug behavior still applies. Stopping and seeking cancel obsolete jobs; requests already received by a provider may still be processed.
 - **PDF documents:** Opening a PDF in the WuPage workspace by selecting or dropping a file, entering a document URL, or using the PDF translation entry point automatically starts translation of the configured reading range using the provider selected at the top of the workspace. Text is extracted locally; scrolling can translate additional nearby pages. Clicking "Download translation" translates the remaining pages before generating the exported PDF, reusing completed translations and edits for the same language and provider. With an online provider selected, text requiring translation is sent directly to that provider along with any configured authentication information. With Firefox local translation selected, that text is processed on the device. The PDF file and page images are not uploaded to the translation provider. Opening an online document first requests the PDF from its original host; selecting or dropping a local file does not upload the file to that host or to WuPage.
@@ -53,6 +54,7 @@ Users can:
 - remove stored provider credentials by clearing the relevant configuration;
 - disable the local translation cache or clear cached translations;
 - pause local model downloads, resume them, import model files offline, or remove downloaded models;
+- export PDFs without downloading fonts, or install and remove the optional complete export font;
 - clear displayed translations from a webpage;
 - reset extension settings; and
 - remove all locally stored extension data by uninstalling WuPage.

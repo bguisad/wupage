@@ -126,6 +126,19 @@ jobs:
           set -euo pipefail
           python3 scripts/package-firefox-source.py --output release
 
+      - name: Enforce extension package size
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          for browser in ("chrome", "edge", "firefox"):
+              archive = Path("release") / f"wupage-{os.environ['RELEASE_VERSION']}-{browser}.zip"
+              size = archive.stat().st_size
+              print(f"{archive.name}: {size:,} bytes")
+              if size >= 10_000_000:
+                  raise SystemExit(f"{archive.name} must stay below 10 MB; review bundled resources.")
+          PY
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

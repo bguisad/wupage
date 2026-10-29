@@ -14,6 +14,9 @@ vi.mock("pdfjs-dist", () => ({
   TextLayer: class { async render() {} }
 }));
 vi.mock("../src/pdf/rendering", () => ({ renderPageWithoutText: vi.fn(async () => undefined) }));
+vi.mock("../src/pdf/font-control", () => ({ setupPdfFontControl: () => ({
+  prepareExport: async () => ({}), setExporting: vi.fn(), cancel: vi.fn()
+}) }));
 vi.mock("../src/pdf/export", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/pdf/export")>(),
   buildRasterPdf, composeTranslatedPageCanvas, downloadPdfBytes,

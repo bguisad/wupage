@@ -26,6 +26,7 @@ import {
   type RgbColor
 } from "./colors";
 import { createEditableTranslationBlock, fitTranslationBlock } from "./editor";
+import { setupPdfFontControl } from "./font-control";
 import {
   buildRasterPdf,
   collectPdfExportScene,
@@ -127,6 +128,7 @@ const statusToast = query<HTMLElement>("#statusToast");
 const fileAccessNotice = query<HTMLElement>("#fileAccessNotice");
 const fileAccessSettingsButton = query<HTMLButtonElement>("#openFileAccessSettings");
 const retryLocalPdfButton = query<HTMLButtonElement>("#retryLocalPdf");
+const fontControl = setupPdfFontControl();
 
 let settings: ExtensionSettings = structuredClone(DEFAULT_SETTINGS);
 let pdfDocument: PDFDocumentProxy | undefined;
@@ -303,6 +305,7 @@ async function openPdfUrl(value: string, autoTranslate: boolean): Promise<boolea
 }
 
 async function loadPdf(data: ArrayBuffer, name: string, autoTranslate: boolean): Promise<void> {
+  fontControl.cancel();
   fileAccessNotice.hidden = true;
   showLoading("正在打开 PDF", "正在读取文档结构…");
   translationRun += 1;
@@ -416,6 +419,7 @@ async function loadPdf(data: ArrayBuffer, name: string, autoTranslate: boolean):
   documentSummary.hidden = false;
   replaceButton.hidden = false;
   downloadButton.hidden = false;
+  query<HTMLButtonElement>("#pdfFontAction").hidden = false;
   const hasTranslatableText = pageStates.some((page) => page.blocks.some((block) => block.translatable));
   translateButton.disabled = !hasTranslatableText;
   updateDownloadButtonState();
@@ -1016,13 +1020,17 @@ async function downloadTranslatedDocument(): Promise<void> {
   const documentProxy = pdfDocument;
   downloadButton.disabled = true;
   downloadButton.classList.add("is-loading");
-  downloadButton.textContent = "正在翻译…";
+  fontControl.setExporting(true);
+  downloadButton.textContent = "选择导出方式…";
   sourceLang.disabled = targetLang.disabled = provider.disabled = true;
   enhanceProviderSelect(provider, settings.providers);
   progressBar.style.width = "0%";
   const rasterPages: RasterPdfPage[] = [];
 
   try {
+    const choice = await fontControl.prepareExport();
+    if (!choice || pdfDocument !== documentProxy) return;
+    downloadButton.textContent = "正在翻译…";
     const session = await translateDocument(true);
     if (!session || pdfDocument !== documentProxy) return;
     await session.finished;
@@ -1048,8 +1056,8 @@ async function downloadTranslatedDocument(): Promise<void> {
         height: page.pdfHeight,
         imageBytes,
         format: "jpeg",
-        scene: await collectPdfExportScene(page.canvas, page.translationLayer, page.blocks, page.pdfWidth, page.pdfHeight,
-          Array.from((await documentProxy.getPage(page.pageNumber)).getViewport({ scale: 1 }).transform ?? []))
+        scene: choice.fontBytes ? await collectPdfExportScene(page.canvas, page.translationLayer, page.blocks, page.pdfWidth, page.pdfHeight,
+          Array.from((await documentProxy.getPage(page.pageNumber)).getViewport({ scale: 1 }).transform ?? [])) : undefined
       });
       const percentage = Math.round(((index + 1) / pageStates.length) * 85);
       progressBar.style.width = `${percentage}%`;
@@ -1057,7 +1065,8 @@ async function downloadTranslatedDocument(): Promise<void> {
     }
 
     const fileName = translatedPdfFileName(currentDocumentName);
-    const bytes = await buildRasterPdf(rasterPages, fileName.replace(/\.pdf$/iu, ""), await documentProxy.getData?.());
+    const bytes = await buildRasterPdf(rasterPages, fileName.replace(/\.pdf$/iu, ""),
+      choice.fontBytes ? await documentProxy.getData?.() : undefined, choice.fontBytes);
     if (translationSession !== session || pdfDocument !== documentProxy) return;
     progressBar.style.width = "100%";
     downloadPdfBytes(bytes, fileName);
@@ -1065,6 +1074,7 @@ async function downloadTranslatedDocument(): Promise<void> {
   } catch (error) {
     showStatus(`下载失败：${error instanceof Error ? error.message : String(error)}`, "error");
   } finally {
+    fontControl.setExporting(false);
     downloadButton.classList.remove("is-loading");
     downloadButton.textContent = "下载译文";
     sourceLang.disabled = targetLang.disabled = provider.disabled = false;

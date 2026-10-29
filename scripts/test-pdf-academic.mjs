@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { browserTarget } from './lib/browser-target.mjs';
@@ -13,6 +14,9 @@ const root = fileURLToPath(new URL('..', import.meta.url)), target = browserTarg
 const output = path.join(root, '.npm-cache/pdf-academic', target.kind);
 await fs.mkdir(output, { recursive: true });
 const checks = [], requests = [];
+const fontPin = JSON.parse(await fs.readFile(path.join(root,'public/pdf-fonts/font-metadata.json'),'utf8')).font;
+const fontBytes = await fs.readFile(process.env.PDF_FONT_FIXTURE || path.join(root,'tests/fixtures/pdf-export-font.otf'));
+let fontRequests = 0;
 const source = await PDFDocument.create();
 const regular = await source.embedFont(StandardFonts.TimesRoman), bold = await source.embedFont(StandardFonts.HelveticaBold), italic = await source.embedFont(StandardFonts.TimesRomanItalic);
 const add = (page, text, x, y, size = 10, font = regular) => page.drawText(text, { x, y, size, font });
@@ -62,6 +66,7 @@ function translate(text) {
 }
 const server = createServer(async (request,response) => {
  if(request.method==='GET'){
+  if(request.url==='/export-font.otf'){fontRequests++;response.writeHead(200,{'Content-Type':'font/otf'}).end(fontBytes);return;}
   const doc = documents.find(doc => request.url === '/'+doc.id+'.pdf');
   if(!doc){response.writeHead(404).end();return;}
   response.writeHead(200,{'Content-Type':'application/pdf'}).end(await fs.readFile(doc.file));return;
@@ -72,10 +77,26 @@ const server = createServer(async (request,response) => {
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const origin=`http://127.0.0.1:${server.address().port}`;
+// Font data is served locally. Only the isolated test copy changes its pinned
+// URL/hash/size; production sources and release files retain the official pin.
+const stagedRoot=path.join(output,'font-test-build'),buildDir=target.kind==='firefox'?'dist-firefox':'dist';
+const stagedBuild=path.join(stagedRoot,buildDir);
+await fs.mkdir(stagedRoot,{recursive:true});await fs.cp(path.join(root,buildDir),stagedBuild,{recursive:true});
+let fontAdapters=0;
+for(const directory of [stagedBuild,path.join(stagedBuild,'assets')])for(const name of await fs.readdir(directory)){
+ if(!name.endsWith('.js'))continue;
+ const file=path.join(directory,name),text=await fs.readFile(file,'utf8');
+ if(!text.includes(fontPin.source))continue;
+ const adapted=text.replaceAll(fontPin.source,origin+'/export-font.otf')
+  .replaceAll(fontPin.sha256,createHash('sha256').update(fontBytes).digest('hex'))
+  .replaceAll(String(fontPin.bytes),String(fontBytes.length));
+ await fs.writeFile(file,adapted);fontAdapters++;
+}
+assert.ok(fontAdapters>0,'optional font metadata adapted in the test build');
 let browser;
 const wait=async(read,predicate,label)=>{let value;const end=Date.now()+120000;do{value=await read();if(predicate(value))return value;await new Promise(r=>setTimeout(r,150));}while(Date.now()<end);throw new Error(label+': '+JSON.stringify(value));};
 try{
- browser=await openExtensionBrowser(root,output,target.kind==='firefox');
+ browser=await openExtensionBrowser(stagedRoot,output,target.kind==='firefox');
  const base=await browser.api(`const settings=(await chrome.runtime.sendMessage({type:'GET_SETTINGS'})).data;
   settings.providers.push({id:'academic-test',type:'http-template',label:'Academic local test',enabled:true,method:'POST',url:${JSON.stringify(origin+'/translate')},headers:{'Content-Type':'application/json'},bodyTemplate:'{"texts":{{json texts}},"context":{{json context}}}',responsePath:'translations'});
   Object.assign(settings,{activeProviderId:'academic-test',sourceLang:'en',targetLang:'zh-CN',cacheEnabled:false,pdfTranslationPageRadius:null});
@@ -104,9 +125,33 @@ try{
   }
   assert.equal(layout.filter(block=>block.overflow).length,0,document.id+' readable layout: '+JSON.stringify(layout.filter(block=>block.overflow)));
   const start=requests.length;
+  if(document.id==='fixture'){
+   assert.equal(fontRequests,0,'reading and translation never download fonts');
+   await browser.evaluate('document.querySelector("#downloadDocument").click();');
+   await wait(()=>browser.evaluate('return document.querySelector("#pdfFontDialog").open;'),Boolean,'font choice dialog');
+   await browser.capture('font-choice.png');
+   if(process.env.PDF_FONT_PROMPT_INSTALL==='1'){
+    await browser.download('document.querySelector("#pdfFontInstall").click();',path.join(output,'fixture-install-and-export.pdf'));
+    assert.equal(fontRequests,1,'font is installed only after confirming the export dialog');
+   }else{
+   const basic=path.join(output,'fixture-basic.pdf');
+   await browser.download('document.querySelector("#pdfFontBasic").click();',basic);
+   const basicLoading=getDocument({data:new Uint8Array(await fs.readFile(basic))}),basicPdf=await basicLoading.promise;
+   assert.equal(basicPdf.numPages,pages);
+   assert.equal((await(await basicPdf.getPage(1)).getTextContent()).items.length,0,'basic export remains image-only');
+   await basicLoading.destroy();assert.equal(fontRequests,0,'basic export needs no font download');
+   await browser.evaluate('document.querySelector("#pdfFontAction").click();');
+   await wait(()=>browser.evaluate('return document.querySelector("#pdfFontDialog").open;'),Boolean,'font installer');
+   await browser.capture('font-installer.png');
+   await browser.evaluate('document.querySelector("#pdfFontInstall").click();');
+   await wait(()=>browser.evaluate('return {open:document.querySelector("#pdfFontDialog").open,state:document.querySelector("#pdfFontAction").dataset.state};'),v=>!v.open&&v.state==='installed','font installed');
+   assert.equal(fontRequests,1,'one explicit font installation');
+   }
+  }
   const destination=path.join(output,document.id+'-translated.pdf');
   await browser.download('document.querySelector("#downloadDocument").click();',destination);
   assert.equal(requests.length,start,'export reuses completed translations');
+  assert.equal(fontRequests,1,'subsequent export reuses the installed font');
   const loading=getDocument({data:new Uint8Array(await fs.readFile(destination))}),pdf=await loading.promise;
   const texts=[];for(let i=1;i<=pdf.numPages;i++)texts.push((await(await pdf.getPage(i)).getTextContent()).items.map(item=>item.str??'').join(''));
   assert.equal(texts.length,pages);assert.ok(texts.some(text=>text.includes('译文')),'Chinese text remains searchable');

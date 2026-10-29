@@ -47,6 +47,45 @@ select:focus-visible,
   min-height: 100vh;
 }
 
+.pdf-font-action {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 38px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #a9b7b2;
+  background: transparent;
+}
+.pdf-font-action svg { width: 18px; height: 18px; }
+.pdf-font-action:hover { color: #b7e4cd; background: #ffffff14; }
+.pdf-font-action[data-state="installed"]:hover { color: #ffc2bd; }
+.pdf-font-action:disabled { opacity: .5; cursor: default; }
+.pdf-font-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  padding: 28px;
+  overflow: auto;
+  border: 1px solid #c7d4cd;
+  border-radius: 18px;
+  color: #18211f;
+  background: #f8faf6;
+  box-shadow: 0 24px 80px #11201840;
+}
+.pdf-font-dialog::backdrop { background: #10201a80; backdrop-filter: blur(3px); }
+.pdf-font-dialog h2 { margin: 0 0 16px; font-size: 21px; line-height: 1.4; }
+.pdf-font-dialog p { margin: 12px 0; font-size: 14px; line-height: 1.8; }
+.pdf-font-dialog .pdf-font-size { font-size: 12px; color: #52665d; }
+.pdf-font-dialog .pdf-font-status { min-height: 42px; font-size: 12px; color: #52665d; }
+.pdf-font-status[data-state="error"] { color: #a62626; }
+.pdf-font-dialog progress { width: 100%; height: 8px; accent-color: #287d63; }
+.pdf-font-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.pdf-font-actions .ghost-button { color: #314a3e; border-color: #c7d4cd; background: #fff; }
+.pdf-font-actions .ghost-button:hover { background: #edf3ec; }
+
 .topbar {
   position: sticky;
   z-index: 20;

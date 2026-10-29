@@ -37,7 +37,13 @@ Build transformations
 - The pinned Bergamot worker's WASM loading expression is replaced with a
   Response containing bytes transferred from the extension page. This allows
   cold starts while Firefox is offline. The actual WASM and models are unchanged.
-- These transformations are in vite.config.ts and run as part of the build.
+- The complete PDF export font is optional data, not bundled executable code.
+  It is downloaded only after the user chooses installation, verified by size
+  and SHA-256, and cached for offline use. Its official Noto source is pinned
+  in public/pdf-fonts/font-metadata.json. Without it, export uses page images.
+  tests/fixtures/pdf-export-font.otf is a small test-only subset reproduced by
+  build/pdf-fonts/build.py; it is not included in extension packages.
+- Runtime transformations are in vite.config.ts and run as part of npm builds.
 
 Third-party code
 Versions and integrity values are in package-lock.json. Principal libraries:
@@ -47,8 +53,10 @@ onnxruntime-web 1.30.0 (https://github.com/microsoft/onnxruntime)
 OpenCV 4.10.0 (https://github.com/opencv/opencv)
 pdfjs-dist (https://github.com/mozilla/pdf.js)
 pdf-lib (https://github.com/Hopding/pdf-lib)
+@pdf-lib/fontkit 1.1.1 (https://github.com/Hopding/fontkit)
+Noto Sans CJK (SIL OFL; public/pdf-fonts/OFL.txt)
 All executable libraries and WASM are bundled. Runtime downloads contain only
-OCR or translation model data, verified by size and SHA-256. They are optional
+OCR/translation model data or PDF font data, verified by size and SHA-256. They are optional
 and are initiated by an explicit user action. No remote scripts are executed.
 
 Rebuilding the custom OCR libraries (optional for a normal extension build)

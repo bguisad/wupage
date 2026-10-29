@@ -219,6 +219,8 @@ try {
     const downloadFailure = page.waitForFunction(() => document.querySelector("#statusToast").dataset.tone === "error",
       undefined, { timeout: 180_000 }).then(async () => { throw new Error(`${entry.id}: ${await page.locator("#statusToast").textContent()}`); });
     await page.locator("#downloadDocument").click();
+    await page.waitForFunction(() => document.querySelector("#pdfFontDialog").open || !document.querySelector("#downloadDocument").textContent.includes("选择导出方式"));
+    if (await page.locator("#pdfFontDialog").evaluate(dialog => dialog.open)) await page.locator("#pdfFontBasic").click();
     const debugTimer = args.includes("--debug") ? setInterval(() => {
       void page.evaluate(() => ({ status: document.querySelector("#statusToast").textContent, button: document.querySelector("#downloadDocument").textContent,
         progress: document.querySelector("#progressBar").style.width, errors: Array.from(document.querySelectorAll(".has-error")).map((el) => el.textContent) }))

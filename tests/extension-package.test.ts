@@ -29,4 +29,13 @@ describe("extension package resources", () => {
       expect(createHash("sha256").update(bytes).digest("hex"), name).toBe(expected.sha256);
     }
   });
+
+  it("keeps optional PDF font binaries out of the extension package", async () => {
+    expect((await readdir("public/pdf-fonts")).sort()).toEqual(["OFL.txt", "font-metadata.json"]);
+    const pin = JSON.parse(await readFile("public/pdf-fonts/font-metadata.json", "utf8")).font;
+    expect(new URL(pin.source).hostname).toBe("raw.githubusercontent.com");
+    expect(pin.source).toContain("/f8d157532fbfaeda587e826d4cd5b21a49186f7c/");
+    expect(pin.bytes).toBe(16437364);
+    expect(pin.sha256).toBe("2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b");
+  });
 });

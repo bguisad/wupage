@@ -13,12 +13,13 @@ export interface RasterPdfPage {
 export async function buildRasterPdf(
   pages: RasterPdfPage[],
   title: string,
-  sourceBytes?: Uint8Array
+  sourceBytes?: Uint8Array,
+  fontBytes?: Uint8Array
 ): Promise<Uint8Array> {
   if (!pages.length) throw new Error("没有可导出的 PDF 页面。");
-  if (pages.some((page) => page.scene)) {
+  if (fontBytes && pages.some((page) => page.scene)) {
     const { buildSearchablePdf } = await import("./vector-export");
-    return buildSearchablePdf(pages, title, sourceBytes);
+    return buildSearchablePdf(pages, title, sourceBytes, fontBytes);
   }
   const { PDFDocument } = await import("pdf-lib");
   const document = await PDFDocument.create();

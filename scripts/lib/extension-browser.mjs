@@ -59,8 +59,13 @@ export async function openExtensionBrowser(root, output, firefox = false) {
           await select(page); await browser.execute(source);
           for (let attempt = 0; attempt < 600; attempt++) {
             const files = await fs.readdir(output);
-            const file = files.find(name => !before.has(name) && name.endsWith('.pdf') && !files.includes(name + '.part'));
-            if (file) { await fs.copyFile(path.join(output, file), destination); return destination; }
+            const added = files.filter(name => !before.has(name));
+            const file = added.find(name => name.endsWith('.pdf'));
+            // Firefox creates an empty destination before its randomly named
+            // .part file finishes; checking only "<name>.pdf.part" races it.
+            if (file && !added.some(name => name.endsWith('.part')) && (await fs.stat(path.join(output, file))).size > 0) {
+              await fs.copyFile(path.join(output, file), destination); return destination;
+            }
             await new Promise(resolve => setTimeout(resolve, 200));
           }
           throw new Error('Firefox PDF download timed out');
