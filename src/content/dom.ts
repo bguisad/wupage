@@ -14,6 +14,7 @@ import {
   isScientificCitation, isScientificMathImage, legacyScientificProseBlock, prepareLegacyScientificParagraphs
 } from "./legacy-scientific";
 import { videoPlatform } from "../video/platforms";
+import { clearTranslationTypography, linkTranslationTypography } from "./translation-typography";
 
 export interface TextSegment {
   id: string;
@@ -686,6 +687,7 @@ export function renderTranslations(
       continue;
     }
     insertGroupedTranslation(group, element, displayMode);
+    linkTranslationTypography(element, block);
     renderedById.set(group.id, element);
     if (displayMode === "replace") {
       replaceTrackedSource(group.nodes, group.id);
@@ -717,7 +719,8 @@ export function renderTranslations(
       renderedById.set(tracked.id, element);
       continue;
     }
-    tracked.node.after(element);
+    if (tracked.mode === "block" && parent.matches(HEADING_SELECTOR)) insertBlockTranslation(parent, element);
+    else tracked.node.after(element);
     renderedById.set(tracked.id, element);
     if (displayMode === "replace") replaceTrackedSource([tracked]);
   }
@@ -811,6 +814,7 @@ export function renderTranslationPlaceholders(segments: TextSegment[]): void {
     pending.setAttribute(TRANSLATION_TARGET_ATTR, targetId);
     removePendingForId(group.id);
     insertGroupedTranslation(group, pending);
+    linkTranslationTypography(pending, block);
     block.setAttribute(TRANSLATED_ATTR, "true");
   }
 
@@ -853,6 +857,7 @@ export function clearTranslations(): void {
 }
 
 export function hideTranslations(): void {
+  clearTranslationTypography();
   restoreTrackedAttributesIn(document.documentElement);
   restoreReplacedSourcesIn(document.documentElement);
   document.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
@@ -1108,7 +1113,8 @@ function insertPending(anchor: Text, id: string, mode: RenderMode): void {
   removePendingForId(id);
   const pending = createPendingElement(id, mode);
   if (anchor.parentElement) applyTranslationTextColor(pending, anchor.parentElement, "bilingual");
-  anchor.after(pending);
+  if (mode === "block" && anchor.parentElement?.matches(HEADING_SELECTOR)) insertBlockTranslation(anchor.parentElement, pending);
+  else anchor.after(pending);
 }
 
 let translationColors: TranslationColors | undefined;
@@ -1787,11 +1793,8 @@ function insertBlockTranslation(block: Element, translation: Element): void {
   }
   if (block.matches(HEADING_SELECTOR)) {
     translation.setAttribute("data-wupage-container", "heading");
-    const anchor = findHeadingAnchor(block);
-    if (anchor) {
-      anchor.before(translation);
-      return;
-    }
+    // Keep heading anchors and action controls on the original title's row;
+    // the bilingual result starts its own row with the same typography.
     block.append(translation);
     return;
   }
@@ -1842,12 +1845,6 @@ function insertGroupedTranslation(
     return;
   }
   insertBlockTranslation(block, translation);
-}
-
-function findHeadingAnchor(block: Element): Element | null {
-  return Array.from(block.children).find((child) =>
-    child.matches(".anchor, [href^='#']")
-  ) ?? null;
 }
 
 function getRenderMode(element: Element | null): RenderMode {

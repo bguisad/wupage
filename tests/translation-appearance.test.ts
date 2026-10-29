@@ -1,12 +1,64 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import { clearTranslations, refreshTranslationColors, renderTargetTranslation } from "../src/content/dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearTranslations, collectParagraphTextSegments, refreshTranslationColors, renderTargetTranslation, renderTranslations } from "../src/content/dom";
 import { mapTranslationTextColor } from "../src/shared/translation-colors";
 
 afterEach(() => {
   clearTranslations();
   document.body.replaceChildren();
   refreshTranslationColors();
+  vi.restoreAllMocks();
+});
+
+describe("paragraph typography", () => {
+  const translate = () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 600, height: 80, top: 0, left: 0,
+      bottom: 80, right: 600, x: 0, y: 0, toJSON: () => ({}) });
+    const source = document.querySelector<HTMLElement>("#source")!;
+    const segments = collectParagraphTextSegments(source);
+    renderTranslations(segments.map(({ id }) => ({ id, text: "完整的段落译文应保留原文的字号。" })));
+    return { source, output: document.querySelector<HTMLElement>(".wupage-translation")! };
+  };
+
+  it("keeps a rich paragraph's typography when its translation is outside the source", () => {
+    document.body.innerHTML = '<main style="font:16px Arial"><p id="source" style="font:italic 500 28px/1.4 Georgia;letter-spacing:.4px">A complete <em>paragraph with emphasis</em> retains its typography.</p></main>';
+    const { source, output } = translate();
+    expect(output).not.toBeNull();
+    expect(source.contains(output)).toBe(false);
+    expect(output.style.fontSize).toBe("28px");
+    expect(output.style.fontFamily).toBe("Georgia");
+    expect(output.style.fontWeight).toBe("500");
+    expect(output.style.fontStyle).toBe("italic");
+    expect(output.style.letterSpacing).toBe("0.4px");
+    expect(output.style.getPropertyPriority("font-size")).toBe("important");
+  });
+
+  it("updates an existing sibling after the host changes typography without replacing the result", async () => {
+    document.body.innerHTML = '<div><span id="source" style="font-family:Georgia;font-size:24px;font-weight:600">First authored sentence with enough text.<br>Second sentence on its own line.<br></span></div>';
+    const { source, output } = translate();
+    expect(source.contains(output)).toBe(false);
+    expect(output.style.fontSize).toBe("24px");
+    source.style.fontSize = "31px";
+    source.style.fontWeight = "700";
+    await vi.waitFor(() => {
+      expect(output.style.fontSize).toBe("31px");
+      expect(output.style.fontWeight).toBe("700");
+    });
+    expect(document.querySelector(".wupage-translation")).toBe(output);
+    clearTranslations();
+    expect(document.querySelector(".wupage-translation")).toBeNull();
+    expect(source.style.fontSize).toBe("31px");
+    expect(source.querySelectorAll("br")).toHaveLength(2);
+  });
+
+  it("leaves a descendant translation free to inherit responsive source styles", () => {
+    document.body.innerHTML = '<h2 id="source" style="font:400 42px Georgia">A language empowering everyone<br>to build reliable software.</h2>';
+    const { source, output } = translate();
+    expect(source.contains(output)).toBe(true);
+    expect(output.dataset.wupageContainer).toBe("heading");
+    expect(output.style.fontSize).toBe("");
+    expect(output.style.fontWeight).toBe("");
+  });
 });
 
 describe("custom bilingual colors", () => {

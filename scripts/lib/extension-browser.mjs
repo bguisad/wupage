@@ -36,6 +36,14 @@ export async function openExtensionBrowser(root, output, firefox = false) {
         resize: async (width, height) => {
           await select(page); await browser.command('WebDriver:SetWindowRect', { width, height });
         },
+        press: async combination => {
+          await select(page);
+          const modifiers = { Alt: '\uE00A', Shift: '\uE008', Control: '\uE009', Meta: '\uE03D' };
+          const keys = combination.split('+').map(key => modifiers[key] || key.toLowerCase());
+          await browser.command('WebDriver:PerformActions', { actions: [{ type: 'key', id: 'keyboard', actions: [
+            ...keys.map(value => ({ type: 'keyDown', value })), ...[...keys].reverse().map(value => ({ type: 'keyUp', value }))
+          ] }] });
+        },
         download: async (source, destination) => {
           const before = new Set(await fs.readdir(output));
           await select(page); await browser.execute(source);
@@ -69,6 +77,7 @@ export async function openExtensionBrowser(root, output, firefox = false) {
       navigate: url => page.goto(url),
       capture: name => page.screenshot({ path: path.join(output, name) }),
       resize: (width, height) => page.setViewportSize({ width, height }),
+      press: async combination => { await page.bringToFront(); await page.keyboard.press(combination); },
       download: async (source, destination) => {
         const pending = page.waitForEvent('download', { timeout: 120000 });
         await page.evaluate(`(()=>{${source}})()`);

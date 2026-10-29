@@ -207,6 +207,7 @@ npm run test:page
 - `npm run test:cards`：使用实际扩展和本地模拟服务，检查中英文界面下的混合语言卡片。覆盖 Flex/Grid 字段分离、标题字号与字重、作者链接、两种窗口宽度、三种显示模式和清除还原；匿名服务将整批判为目标语言时，未翻译项应独立重试。报告保存在 `.npm-cache/card-layout/`。
 - `npm run test:floating`：加载实际扩展，覆盖真实指针的 500 毫秒悬停延迟、离开取消、拖动与位置保存、悬浮球和弹窗的翻译中停止、迟到响应、原译文切换与缓存复用、动态列表、状态同步、缓存清理、失败重试、Debug、设置入口、键盘操作和小窗口。另检查紧凑菜单布局、划词开关与弹窗的双向同步、缺少 OCR 模型时禁用图片翻译，以及说明弹层的边界。报告保存在 `.npm-cache/floating-interactions/`。
 - `npm run test:paragraph-mode`（Chrome）和 `npm run test:paragraph-mode:edge`：在加载扩展前先打开本地网页，验证暂时未连接不会禁用「段落翻译」按钮，提示刷新后可在同一弹窗重试，并检查顶层与嵌入文档的 Ctrl 点击翻译、恢复和退出同步。弹窗与悬浮菜单使用独立按钮启停段落模式，显示方式下拉框仅保留三种译文样式，切换样式保持段落模式；同时检查窄弹窗的按钮排版。使用独立配置和本地模拟服务，支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER`、`EDGE_TEST_BROWSER`；报告和截图按浏览器保存到 `.npm-cache/paragraph-mode/`。
+- 正文和标题译文继承原文字体与行高。需要放在原文外侧以避开截断的结果，由 `src/content/translation-typography.ts` 同步字体；仅在存在此类结果时监听尺寸、祖先样式和字体加载变化，清除结果后释放监听。`npm run test:paragraph-typography` 及其 `:edge`、`:firefox` 版本使用真实键盘快捷键与本地模拟译文，检查多行标题、富文本、手动换行、两种窗口宽度、网页样式变化、三种显示模式及原文恢复；缩放不得重新请求翻译。加 `-- --live` 还会检查 Rust 官网，报告保存在 `.npm-cache/paragraph-typography/`。
 - `npm run test:floating-responsive`：使用实际扩展和触屏仿真，覆盖 iPad Pro 13 的 1032 × 1376 竖屏与横屏。检查长按打开菜单、松手保持、外部轻点关闭、拖动取消长按、轻点翻译，以及首次翻译失败自动打开菜单的服务、语言与显示模式、菜单边界和触屏选择操作；另验证纯触屏隐藏段落模式及说明、鼠标环境保留入口，以及弹窗隐藏后的紧凑布局。报告与截图保存在 `.npm-cache/floating-responsive/`，支持 `PLAYWRIGHT_MODULE` 与 `PDF_TEST_BROWSER`。
 - `npm run test:settings`：延迟返回设置，逐帧检查弹窗和设置页重开时的图片翻译开关；保存为开启或关闭的状态都不得闪现错误位置或启动动画。报告保存在 `.npm-cache/settings-initialization/`。
 - 网页回归还包含明暗背景、现代 CSS 颜色和网页强制文字颜色下的实际颜色检查，切换原色、双色和替换模式时不得新增翻译请求。

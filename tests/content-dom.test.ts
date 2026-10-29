@@ -478,6 +478,7 @@ describe("content DOM translation extraction", () => {
   });
 
   afterEach(() => {
+    clearTranslations();
     vi.restoreAllMocks();
     document.documentElement.className = "";
     document.body.innerHTML = "";
@@ -1187,7 +1188,7 @@ describe("content DOM translation extraction", () => {
     expect(segments.map((segment) => segment.text)).toEqual(["Blanket Implementations"]);
   });
 
-  it("inserts heading translations before heading anchor links", () => {
+  it("keeps heading anchor links before the translated title row", () => {
     document.body.innerHTML = `
       <main id="main-content">
         <h2 id="implementations" class="section-header">
@@ -1205,7 +1206,7 @@ describe("content DOM translation extraction", () => {
     const translation = heading?.querySelector(".wupage-translation");
     const anchor = heading?.querySelector(".anchor");
 
-    expect(translation?.nextElementSibling).toBe(anchor);
+    expect(anchor?.nextElementSibling).toBe(translation);
     expect(anchor?.textContent).toBe("§");
   });
 

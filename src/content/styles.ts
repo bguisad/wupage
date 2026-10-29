@@ -18,17 +18,16 @@ export function injectContentStyles(): void {
       display: block;
       margin: 0.18em 0 0.38em;
       color: inherit;
-      font-size: 0.95em;
-      line-height: 1.55;
+      font: inherit;
+      line-height: inherit;
     }
 
     .wupage-translation[data-wupage-mode="block"][data-wupage-container="heading"] {
-      display: inline;
-      margin: 0 0 0 0.35em;
+      display: block;
+      margin: 0.18em 0 0.38em;
       color: inherit;
-      font-size: 1rem;
-      font-weight: 400;
-      line-height: 1.45;
+      font: inherit;
+      line-height: inherit;
     }
 
     .wupage-translation[data-wupage-mode="inline"] {
