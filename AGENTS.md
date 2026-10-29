@@ -9,6 +9,11 @@
 - docs/development.md 保留源码构建、项目结构和验证说明。
 - 发布流水线、商店自动提交、凭据配置及重试流程作为代理上下文保留在本文件中，不写入 README 或开发文档。
 
+## 图标约定
+
+- 界面通用图标统一使用 [Nieobie/game-icon-pack](https://github.com/Nieobie/game-icon-pack)，复用 `src/shared/ui-icons.ts` 和本地已收录的 SVG。
+- 静态界面使用 `data-wupage-icon`，动态控件使用 `uiIconMarkup`；CSS 图标使用 `uiIconUrl`。不要用 Unicode 字符或手绘图形替代已有图标。
+
 ## 自动化实现位置
 
 以下为现有实现的操作背景，具体行为以 .github/workflows/release.yml、.github/workflows/publish-edge.yml、.github/workflows/publish-firefox.yml 及对应的 scripts/publish-*.py 为准。

@@ -1,5 +1,6 @@
 import { applyPopupMenuLayout, DEFAULT_POPUP_MENU, normalizePopupMenu, POPUP_MENU_GROUPS, POPUP_MENU_ITEMS,
   type PopupMenuItem, type PopupMenuLayout } from "../shared/popup-menu";
+import { uiIconMarkup } from "../shared/ui-icons";
 import "./popup-menu.css";
 
 export function setupPopupMenuControls(root: HTMLElement): { render: (value: unknown) => void; read: () => PopupMenuLayout } {
@@ -23,6 +24,8 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
     for (const item of POPUP_MENU_ITEMS.filter(item => item.group === group.id)) {
       const button = document.createElement("button"); button.type = "button";
       button.dataset.popupMenuItem = item.id; button.textContent = item.label;
+      const removeIcon = document.createElement("span"); removeIcon.className = "menu-preview-remove";
+      removeIcon.setAttribute("aria-hidden", "true"); removeIcon.innerHTML = uiIconMarkup("cross"); button.append(removeIcon);
       button.setAttribute("aria-label", `移除${item.label}`);
       button.title = `点击移除${item.label}；拖动或按 Alt + 方向键排序`;
       button.setAttribute("aria-describedby", "popupMenuKeyboardHint");
@@ -32,7 +35,8 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       buttons.set(item.id, button); grid.append(button);
       const add = document.createElement("button"); add.type = "button"; add.dataset.menuAdd = item.id;
       add.className = "menu-library-button"; add.setAttribute("aria-label", `添加${item.label}`);
-      const plus = document.createElement("span"); plus.textContent = "+"; plus.setAttribute("aria-hidden", "true");
+      const plus = document.createElement("span"); plus.className = "menu-library-add-icon";
+      plus.innerHTML = uiIconMarkup("plus"); plus.setAttribute("aria-hidden", "true");
       add.append(document.createTextNode(item.label), plus); items.append(add); available.set(item.id, add);
       add.addEventListener("click", () => {
         draft.hidden = draft.hidden.filter(id => id !== item.id);
