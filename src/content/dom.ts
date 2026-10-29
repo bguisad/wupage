@@ -13,6 +13,7 @@ import {
   clearLegacyScientificParagraphs, isLegacyScientificEquation, isLegacyScientificProseBlock,
   isScientificCitation, isScientificMathImage, legacyScientificProseBlock, prepareLegacyScientificParagraphs
 } from "./legacy-scientific";
+import { videoPlatform } from "../video/platforms";
 
 export interface TextSegment {
   id: string;
@@ -98,6 +99,10 @@ const SKIP_TAGS = new Set([
   "CANVAS"
 ]);
 const SKIP_SELECTORS = [
+  "[data-wupage-video]",
+  "[data-wupage-video-native]",
+  "#wupage-video-panel",
+  "#wupage-video-overlay",
   "#wupage-selection-tools",
   "#wupage-floating-hitbox",
   "#wupage-floating-menu",
@@ -1550,6 +1555,7 @@ function shouldSkipElement(
 ): boolean {
   if (isLegacyScientificEquation(element)) return true;
   if (element.closest(`.${TRANSLATION_CLASS},kbd,samp`)) return true;
+  if (element.closest(videoPlatform()?.captions ?? ".vjs-text-track-display,.plyr__captions,.jw-captions")) return true;
   if (element.closest(REDDIT_METADATA_SELECTOR)) return true;
   if (isInsideCodeBlock(element)) return false;
   if (isCompactControlText(element)) {

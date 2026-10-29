@@ -1,0 +1,77 @@
+// Installed Firefox, isolated profile, local generated media and mock text service.
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createServer} from 'node:http';
+import {setTimeout as delay} from 'node:timers/promises';
+import {startFirefox} from './lib/firefox.mjs';
+const root=fileURLToPath(new URL('..',import.meta.url));
+const output=path.join(root,'.npm-cache/video-firefox');await fs.mkdir(output,{recursive:true});
+const requests=[],checks=[];
+const server=createServer(async(request,response)=>{
+ if(request.method==='POST'){
+  let text='';for await(const chunk of request)text+=chunk;const payload=JSON.parse(text);requests.push(payload);
+  response.setHeader('Content-Type','application/json');response.end(JSON.stringify({translations:payload.texts.map(text=>text==='Hello world.'?'你好，世界。':text==='Seek to another moment.'?'跳转到另一个时间。':'读取视频现有字幕。')}));return;
+ }
+ if(request.url==='/embedded'){
+  response.setHeader('Content-Type','text/html;charset=utf-8');
+  response.end('<!doctype html><h1>Embedded video</h1><iframe width="850" height="750" src="http://localhost:'+server.address().port+'/"></iframe>');return;
+ }
+ const name=request.url==='/video-subtitles.vtt'?'video-subtitles.vtt':'video-subtitles.html';
+ response.setHeader('Content-Type',name.endsWith('.vtt')?'text/vtt;charset=utf-8':'text/html;charset=utf-8');
+ response.end(await fs.readFile(path.join(root,'tests/fixtures',name)));
+});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
+let firefox;
+try{
+ firefox=await startFirefox(output,path.join(root,'dist-firefox'));
+ const first=await firefox.command('WebDriver:GetWindowHandle');const control=first.value??first;
+ const select=handle=>firefox.command('WebDriver:SwitchToWindow',{handle});
+ const api=async script=>{
+  await select(control);
+  const result=await firefox.executeAsync('const done=arguments[arguments.length-1];const chrome=window.wrappedJSObject.chrome;(async()=>{'+script+'})().then(value=>done(JSON.stringify({value})),error=>done(JSON.stringify({error:String(error)})));');
+  const parsed=JSON.parse(result);if(parsed.error)throw new Error(parsed.error);return parsed.value;
+ };
+ const wait=async(read,predicate,label)=>{
+  const start=Date.now();let value;
+  do{value=await read();if(predicate(value))return value;await delay(150);}while(Date.now()-start<20000);
+  throw new Error('Timed out: '+label+'; '+JSON.stringify(value));
+ };
+ await firefox.command('WebDriver:Navigate',{url:firefox.base+'options.html'});
+ await api(`const {data:settings}=await chrome.runtime.sendMessage({type:'GET_SETTINGS'});
+  settings.activeProviderId='http-template';settings.sourceLang='en';settings.targetLang='zh-CN';settings.cacheEnabled=false;
+  Object.assign(settings.providers.find(provider=>provider.id==='http-template'),{enabled:true,url:${JSON.stringify(origin+'/translate')},method:'POST',headers:{'Content-Type':'application/json'},bodyTemplate:'{"texts":{{json texts}}}',responsePath:'translations'});
+  return chrome.runtime.sendMessage({type:'SAVE_SETTINGS',settings});`);
+ const opened=await firefox.command('WebDriver:NewWindow',{type:'tab'});const reading=opened.handle??opened.value?.handle;
+ await select(reading);await firefox.command('WebDriver:Navigate',{url:origin});
+ await wait(()=>firefox.execute('return window.wrappedJSObject.fixtureReady===true;'),Boolean,'local video ready');
+ await wait(()=>firefox.execute('return !!document.querySelector("[data-wupage-video]");'),Boolean,'player controls');
+ assert.equal(requests.length,0);
+ await firefox.execute('document.querySelector("[data-wupage-video]").shadowRoot.querySelector(".toggle").click();');
+ const translation=()=>firefox.execute('return document.querySelector("[data-wupage-video]").shadowRoot.querySelector(".translation span").textContent;');
+ await wait(translation,text=>text==='你好，世界。','bilingual subtitle');
+ checks.push('Firefox native subtitle track, text translation and one-click control');
+ await firefox.execute('document.querySelector("video").currentTime=2.3;');
+ await wait(translation,text=>text==='跳转到另一个时间。','seek');checks.push('media-time seek');
+ await firefox.execute('document.querySelector("[data-wupage-video]").shadowRoot.querySelector(".settings").click();');
+ assert.equal(await firefox.execute('return document.querySelector("[data-wupage-video]").shadowRoot.querySelector(".panel").hidden;'),false);
+ const shot=await firefox.command('WebDriver:TakeScreenshot',{id:null,highlights:[],full:true});
+ await fs.writeFile(path.join(output,'settings.png'),Buffer.from(shot.value,'base64'));
+ await firefox.execute('const root=document.querySelector("[data-wupage-video]").shadowRoot;root.querySelector(".close").click();root.querySelector(".toggle").click();');
+ assert.equal(await firefox.execute('return document.querySelector("video").textTracks[0].mode;'),'showing');checks.push('popover and native subtitle restoration');
+ await firefox.command('WebDriver:Navigate',{url:origin+'/embedded'});
+ const frame=await firefox.command('WebDriver:FindElement',{using:'css selector',value:'iframe'});
+ await firefox.command('WebDriver:SwitchToFrame',{id:frame.value});
+ await wait(()=>firefox.execute('return !!document.querySelector("[data-wupage-video]");'),Boolean,'lazy embedded video controls');
+ await wait(()=>firefox.execute('return window.wrappedJSObject.fixtureReady===true;'),Boolean,'embedded video ready');
+ const openedEmbedded=await api(`const tab=(await chrome.tabs.query({})).find(tab=>tab.url===${JSON.stringify(origin+'/embedded')});return chrome.runtime.sendMessage({type:'OPEN_VIDEO_SUBTITLES',tabId:tab.id});`);
+ assert.equal(openedEmbedded.ok,true,JSON.stringify(openedEmbedded));
+ await select(reading);await firefox.command('WebDriver:SwitchToFrame',{id:frame.value});
+ await wait(translation,text=>text==='你好，世界。','embedded bilingual subtitle');
+ checks.push('Firefox lazy video module and popup routing in a cross-origin iframe');
+ await firefox.command('WebDriver:SwitchToFrame',{id:null});
+ await fs.writeFile(path.join(output,'report.json'),JSON.stringify({passed:true,version:firefox.session.capabilities.browserVersion,checks,requests},null,2));
+ console.log(JSON.stringify({passed:true,version:firefox.session.capabilities.browserVersion,checks}));
+}catch(error){await fs.writeFile(path.join(output,'report.json'),JSON.stringify({passed:false,checks,failure:String(error)},null,2));throw error;}
+finally{await firefox?.close();await new Promise(resolve=>server.close(resolve));}

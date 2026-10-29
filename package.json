@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "build:firefox": "vite build --mode firefox",
+    "build:video-preview": "vite build --mode video-preview",
     "dev:firefox": "vite build --mode firefox --watch",
     "test:firefox": "node scripts/test-firefox.mjs",
     "dev": "vite build --watch",
@@ -20,6 +21,10 @@
     "test:floating": "node scripts/test-floating-interactions.mjs",
     "test:floating-responsive": "node scripts/test-floating-responsive.mjs",
     "test:selection": "node scripts/test-selection-translation.mjs",
+    "test:video": "node scripts/test-video-subtitles.mjs",
+    "test:video:sites": "node scripts/test-video-sites.mjs",
+    "test:video:firefox": "node scripts/test-video-firefox.mjs",
+    "test:video:performance": "node scripts/test-video-performance.mjs",
     "test:shortcuts": "node scripts/test-shortcuts.mjs",
     "test:paragraph-mode": "node scripts/test-paragraph-mode.mjs",
     "test:paragraph-mode:edge": "node scripts/test-paragraph-mode.mjs --edge",

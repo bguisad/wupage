@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-firefox/
+dist-video-preview/
 .env
 .DS_Store
 .npm-cache/

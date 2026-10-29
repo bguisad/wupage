@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Video subtitle fixture</title>
+<style>
+  body { margin: 32px; background: #f3f6f5; color: #172026; font: 15px/1.5 system-ui,sans-serif; }
+  h1 { font-size: 24px; margin: 0 0 6px; } p { margin: 0 0 20px; color: #4c5a61; }
+  .player { width: min(800px,100%); background: #173b3c; } video { display: block; width: 100%; aspect-ratio: 16/9; }
+  .player:fullscreen { display: grid; place-items: center; width: 100%; } .player:fullscreen video { max-height: 100vh; }
+  button { margin-top: 12px; padding: 7px 12px; }
+  html.root-page-fullscreen body { position: fixed; inset: 0; margin: 0; }
+</style>
+<h1>Video subtitles · English → Chinese</h1>
+<p>Standard WebVTT track · local synthetic video · no external media</p>
+<div class="player"><video controls muted playsinline><track src="/video-subtitles.vtt" kind="subtitles" srclang="en" label="English" default></video></div>
+<button id="fullscreen">Player fullscreen</button>
+<button id="nativeFullscreen">Video fullscreen</button>
+<button id="pageFullscreen">Whole page fullscreen</button>
+<script>
+  document.querySelector('#fullscreen').onclick = () => document.querySelector('.player').requestFullscreen();
+  document.querySelector('#nativeFullscreen').onclick = () => document.querySelector('video').requestFullscreen();
+  document.querySelector('#pageFullscreen').onclick = () => {
+    document.documentElement.classList.add('root-page-fullscreen');
+    document.documentElement.requestFullscreen();
+  };
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) document.documentElement.classList.remove('root-page-fullscreen');
+  });
+  (async () => {
+    // Generate a small real video locally so seek/track tests require no downloaded media.
+    const canvas = document.createElement('canvas'); canvas.width = 800; canvas.height = 450;
+    const ctx = canvas.getContext('2d');
+    const draw = () => {
+      ctx.fillStyle = '#173b3c'; ctx.fillRect(0,0,800,450);
+      ctx.fillStyle = '#75c8b0'; ctx.fillRect(54,58,46,5);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 36px system-ui'; ctx.fillText('WuPage subtitles',54,122);
+      ctx.fillStyle = '#bdd4cd'; ctx.font = '22px system-ui'; ctx.fillText('Original text + translation',54,168);
+      ctx.fillStyle = '#75c8b0'; ctx.font = '16px system-ui'; ctx.fillText('STANDARD VIDEO TRACK / SRT / WEBVTT',54,215);
+    };
+    draw();
+    const stream = canvas.captureStream(10);
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+    const chunks = [];
+    recorder.ondataavailable = event => chunks.push(event.data);
+    const recorded = new Promise(resolve => { recorder.onstop = resolve; });
+    recorder.start();
+    const timer = setInterval(draw, 100);
+    await new Promise(resolve => setTimeout(resolve, 4000)); recorder.stop(); await recorded;
+    clearInterval(timer); stream.getTracks().forEach(track => track.stop());
+    const video = document.querySelector('video');
+    const loaded = new Promise(resolve => video.addEventListener('loadedmetadata', resolve, {once:true}));
+    video.src = URL.createObjectURL(new Blob(chunks, {type:'video/webm'})); await loaded;
+    await new Promise(resolve => { if (video.readyState >= 2) resolve(); else video.addEventListener('loadeddata',resolve,{once:true}); });
+    await video.play(); video.pause(); video.currentTime = 0;
+    window.fixtureReady = true;
+  })();
+</script>
+</html>

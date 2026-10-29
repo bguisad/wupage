@@ -11,6 +11,7 @@ import { initializeOllamaCompatibility } from "./ollama-compatibility";
 import { requestLocal } from "./local";
 import { lookupDictionary, playDictionaryAudio, stopDictionaryAudio } from "./dictionary";
 import { normalizeSelectionTranslation } from "../shared/dictionary";
+import { cancelVideo, clearVideoTab, openVideoInTab, registerVideoFrame, translateVideo } from "./video";
 import { checkDoubao, getDoubaoStatus } from "./doubao";
 import { initializeDoubaoCompatibility } from "./doubao-compatibility";
 import { runtimeErrorResponse } from "../shared/errors";
@@ -18,6 +19,8 @@ import { frameSessions } from "./frame-sessions";
 import type { FrameSessionRequest } from "../shared/frame-session";
 
 frameSessions.install();
+
+chrome.tabs?.onRemoved?.addListener(clearVideoTab);
 
 chrome.runtime.onMessage.addListener((request: RuntimeRequest, sender, sendResponse) => {
   if ("target" in request) return;
@@ -50,6 +53,14 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     case "PAGE_TRANSLATION_STATE_CHANGED":
       await refreshPageContextMenu(sender);
       return null;
+    case "VIDEO_FRAME_STATUS":
+      registerVideoFrame(request, sender); return null;
+    case "TRANSLATE_VIDEO_SUBTITLES":
+      return translateVideo(request, sender);
+    case "CANCEL_VIDEO_SUBTITLES":
+      cancelVideo(request, sender); return null;
+    case "OPEN_VIDEO_SUBTITLES":
+      return openVideoInTab(request.tabId ?? sender.tab?.id);
     case "LOOKUP_DICTIONARY":
     case "PLAY_DICTIONARY_AUDIO": {
       const settings = normalizeSelectionTranslation((await getSettings()).selectionTranslation);
@@ -116,7 +127,7 @@ async function handleMessage(request: RuntimeRequest, sender: chrome.runtime.Mes
     }
     case "TRANSLATE_BATCH": {
       const settings = await getSettings();
-      return frameSessions.translate(request, sender, signal => translateWithSettings(settings, request, signal));
+      return frameSessions.translate(request, sender, signal => translateWithSettings(settings, request, { signal }));
     }
     case "LOAD_IMAGE": {
       const settings = await getSettings();

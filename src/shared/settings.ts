@@ -5,6 +5,7 @@ import { normalizeSelectionTranslation } from "./dictionary";
 import { normalizeAppearance } from "./appearance";
 import { normalizeShortcutEnabled, normalizeShortcuts } from "./shortcuts";
 import { normalizeServiceConfig, supportsServiceMode } from "./translation-service";
+import { normalizeVideoTranslation } from "./video";
 import { normalizeRequestTemplate, supportsRequestTemplate } from "./request-template";
 import type { ExtensionSettings, ProviderConfig } from "./types";
 import { normalizeFrameTranslation } from "./frame-session";
@@ -39,6 +40,7 @@ export function normalizeSettings(value: unknown): ExtensionSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...input,
+    ...(input.videoTranslation !== undefined ? { videoTranslation: normalizeVideoTranslation(input.videoTranslation) } : {}),
     providers,
     shortcuts: normalizeShortcuts(input.shortcuts),
     shortcutEnabled: normalizeShortcutEnabled(input.shortcutEnabled, input.shortcuts),

@@ -7,11 +7,13 @@ import { sendRuntimeRequest } from "./runtime";
 import { installFrameVisibilityBridge } from "./frame-visibility";
 import { SETTINGS_KEY } from "../shared/defaults";
 import type { ExtensionSettings } from "../shared/types";
+import { initEmbeddedVideoSubtitles } from "./video-bootstrap";
 
 const scope = globalThis as typeof globalThis & { __wupageFrameBootstrap?: boolean };
 const visibility = installFrameVisibilityBridge();
 if (window !== window.top && !scope.__wupageFrameBootstrap) {
   scope.__wupageFrameBootstrap = true;
+  initEmbeddedVideoSubtitles();
   const documentKey = createDocumentKey();
   let current: FrameSessionSnapshot | undefined;
   let frameId: number | undefined;

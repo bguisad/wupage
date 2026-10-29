@@ -24,11 +24,19 @@ let nextDebugTaskId = 1;
 const MAX_DEBUG_TASKS = 100;
 const MAX_LLM_BATCH_ITEMS = 16;
 
+export interface TranslationTaskOptions {
+  signal?: AbortSignal;
+  priority?: boolean;
+  persistentCache?: boolean;
+}
+
 export async function translateWithSettings(
   settings: ExtensionSettings,
   request: TranslateBatchRequest,
-  signal?: AbortSignal
+  options: TranslationTaskOptions = {}
 ): Promise<TranslateBatchResponse> {
+  const { signal } = options;
+  signal?.throwIfAborted();
   const providerId = request.providerId ?? settings.activeProviderId;
   const providerConfig = settings.providers.find((provider) => provider.id === providerId);
   if (!providerConfig) throw new Error(`Provider not found: ${providerId}`);
@@ -43,24 +51,26 @@ export async function translateWithSettings(
         if (!detected) throw new Error("无法可靠识别源语言，请在翻译设置中手动选择源语言。");
         sourceLang = detected;
       }
-      return translateConfigured(settings, { ...request, sourceLang, context: undefined }, providerConfig, requestSignal);
-    });
+      return translateConfigured(settings, { ...request, sourceLang, context: undefined }, providerConfig, { ...options, signal: requestSignal });
+    }, signal);
   }
-  return translateConfigured(settings, request, providerConfig, signal);
+  return translateConfigured(settings, request, providerConfig, options);
 }
 
 async function translateConfigured(
   settings: ExtensionSettings,
   request: TranslateBatchRequest,
   providerConfig: ProviderConfig,
-  signal?: AbortSignal
+  options: TranslationTaskOptions = {}
 ): Promise<TranslateBatchResponse> {
+  const { signal } = options;
   signal?.throwIfAborted();
+  const useCache = settings.cacheEnabled && options.persistentCache !== false;
   const providerId = providerConfig.id;
   const provider = createProvider(providerConfig);
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
-  const cacheProviderId = settings.cacheEnabled
+  const cacheProviderId = useCache
     ? `${providerId}.${await sha256(JSON.stringify({ version: 4, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
       ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
       ...(providerConfig.type === "doubao-web" ? { doubaoProtocolVersion: DOUBAO_PROTOCOL_VERSION, translateService: "1" } : {}),
@@ -72,7 +82,7 @@ async function translateConfigured(
 
   for (const [index, text] of request.texts.entries()) {
     signal?.throwIfAborted();
-    const stored = settings.cacheEnabled
+    const stored = useCache
       ? await readCachedTranslation(cacheProviderId, request.targetLang, text, request.context)
       : undefined;
     const cached = stored !== undefined && request.preservePlaceholders
@@ -92,7 +102,7 @@ async function translateConfigured(
       signal?.throwIfAborted();
       assertTranslationResponse(result, texts.length);
       return result;
-    }, signal);
+    }, signal, options.priority ? 2 : request.pageSession ? 0 : 1);
   const translated = await runBatches(
     uncachedTexts,
     performance.chunkSize,
@@ -109,7 +119,7 @@ async function translateConfigured(
     signal?.throwIfAborted();
     const translation = translated[translatedIndex];
     output[sourceIndex] = translation;
-    if (settings.cacheEnabled) {
+    if (useCache) {
       await writeCachedTranslation(
         cacheProviderId,
         request.targetLang,
@@ -153,18 +163,20 @@ async function runProviderTask(
   performance: ReturnType<typeof getEffectiveProviderPerformance>,
   globalConcurrency: number,
   task: () => Promise<string[]>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priority = 1
 ): Promise<string[]> {
   const debugTask = createDebugTask(providerConfig, request, texts, performance);
   let release: (() => void) | undefined;
   try {
     release = await acquireTaskSlots(
-      providerConfig.id, performance.concurrency, globalConcurrency, debugTask, signal, request.pageSession ? 0 : 1
+      providerConfig.id, performance.concurrency, globalConcurrency, debugTask, signal, priority
     );
     signal?.throwIfAborted();
     debugTask.status = "running";
     debugTask.startedAt = Date.now();
     const result = await task();
+    signal?.throwIfAborted();
     debugTask.status = "succeeded";
     debugTask.finishedAt = Date.now();
     debugTask.translatedTexts = result;

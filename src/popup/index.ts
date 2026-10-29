@@ -25,6 +25,7 @@ const translationDisplayMode = query<HTMLSelectElement>("#translationDisplayMode
 const status = query<HTMLParagraphElement>("#status");
 const pageToggleButton = query<HTMLButtonElement>("#pageToggle");
 const openPdfWorkspaceButton = query<HTMLButtonElement>("#openPdfWorkspace");
+const videoSubtitlesButton = query<HTMLButtonElement>("#openVideoSubtitles");
 const fileAccessHelp = query<HTMLDivElement>("#fileAccessHelp");
 const openFileAccessSettingsButton = query<HTMLButtonElement>("#openFileAccessSettings");
 const translationModeSelect = translationDisplayMode;
@@ -149,6 +150,19 @@ async function init(): Promise<void> {
   sourceLang.addEventListener("change", saveSelection);
   provider.addEventListener("change", saveSelection);
   pageToggleButton.addEventListener("click", togglePageTranslation);
+  videoSubtitlesButton.addEventListener("click", async () => {
+    videoSubtitlesButton.disabled = true;
+    try {
+      await savePopupSettings();
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error("没有活动标签页。");
+      await sendRuntimeMessage({ type: "OPEN_VIDEO_SUBTITLES", tabId: tab.id });
+      window.close();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      updatePageActionAvailability();
+    }
+  });
   translationModeSelect.addEventListener("change", toggleParagraphMode);
   contextMenuTranslationButton.addEventListener("click", toggleContextMenuTranslation);
   updateContextMenuTranslationButton();
@@ -682,6 +696,7 @@ function updateFloatingBallButton(): void {
 
 function updatePageActionAvailability(): void {
   pageToggleButton.disabled = !pageTranslationAvailable;
+  videoSubtitlesButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
   const paragraphOption = translationModeSelect.querySelector<HTMLOptionElement>('option[value="paragraph"]');
   if (paragraphOption) paragraphOption.disabled = !paragraphModeAvailable;
   debugButton.disabled = !pageTranslationAvailable || activeTabIsPdf;
