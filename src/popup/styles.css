@@ -26,7 +26,7 @@ header {
   gap: 10px;
 }
 
-[data-popup-menu-grid][hidden], [data-popup-menu-hidden] {
+[data-popup-menu-grid][hidden], [data-popup-menu-footer][hidden], [data-popup-menu-hidden] {
   display: none !important;
 }
 
@@ -34,7 +34,7 @@ header {
   grid-column: 1 / -1;
 }
 
-.popup[data-menu-loading] [data-popup-menu-grid], .popup[data-menu-loading] #paragraphModeHint {
+.popup[data-menu-loading] [data-popup-menu-grid], .popup[data-menu-loading] [data-popup-menu-footer], .popup[data-menu-loading] #paragraphModeHint {
   visibility: hidden;
 }
 
@@ -235,6 +235,8 @@ button.secondary {
   width: 19px;
   height: 19px;
 }
+
+.footer-links { display: flex; align-items: center; justify-content: center; gap: 16px; }
 
 .footer-link {
   min-height: 28px;

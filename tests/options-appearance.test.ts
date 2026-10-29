@@ -47,7 +47,7 @@ describe("appearance editor", () => {
     query<HTMLButtonElement>('#popupMenuPreview [data-popup-menu-item="debug"]').click();
     query<HTMLButtonElement>('[data-menu-add="debug"]').click();
     expect(query<HTMLButtonElement>('[data-menu-add="debug"]').hidden).toBe(true);
-    expect((features.lastElementChild as HTMLElement).dataset.popupMenuItem).toBe("debug");
+    expect([...features.querySelectorAll<HTMLElement>("[data-popup-menu-item]")].filter(node => !node.hasAttribute("data-popup-menu-hidden")).at(-1)?.dataset.popupMenuItem).toBe("debug");
     query<HTMLButtonElement>("#save").click();
     await vi.waitFor(() => expect(stored.appearance?.popupMenu.hidden).toContain("videoTranslation"));
     expect(stored.appearance!.popupMenu.order.indexOf("floatingBall")).toBeLessThan(stored.appearance!.popupMenu.order.indexOf("contextMenuTranslation"));

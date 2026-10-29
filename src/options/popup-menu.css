@@ -25,13 +25,15 @@
 .menu-layout-preview .menu-preview-feature, .menu-drag-ghost.menu-preview-feature { border: 2px dashed var(--wp-border); background: var(--wp-surface); }
 .menu-layout-preview .menu-preview-primary, .menu-drag-ghost.menu-preview-primary { background: var(--wp-accent); color: var(--wp-on-accent); }
 .menu-layout-preview .menu-preview-link { background: transparent; color: var(--wp-muted); font-size: 12px; }
+.menu-layout-preview-footer { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.menu-layout-preview-footer [data-popup-menu-item] { min-height: 28px; cursor: pointer; }
 .menu-preview-remove { position: absolute; right: -5px; top: -7px; display: flex; justify-content: center; align-items: center; width: 18px; height: 18px; border: 1px solid var(--wp-border); border-radius: 50%; color: var(--wp-danger, #a62626); background: var(--wp-surface); font-size: 10px; opacity: 0; transform: scale(.6); transition: opacity .12s, transform .12s; pointer-events: none; }
 .menu-layout-preview:not([data-menu-sorting]) [data-popup-menu-item]:is(:hover, :focus-visible) .menu-preview-remove { opacity: 1; transform: scale(1); }
 #popupMenuEditor button:focus-visible { outline: 2px solid var(--wp-accent); outline-offset: 3px; }
 .menu-layout-preview [data-popup-menu-wide] { grid-column: 1 / -1; }
 .menu-layout-preview [data-menu-dragging] { color: transparent; background: color-mix(in srgb, var(--wp-accent) 8%, var(--wp-surface)); border: 2px dashed var(--wp-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--wp-accent) 12%, transparent); }
 .menu-layout-preview [data-menu-dragging]::before { content: '放在这里'; color: var(--wp-accent); position: absolute; font-size: 12px; font-weight: 500; }
-.menu-drag-ghost { position: fixed; top: 0; left: 0; z-index: 1000; pointer-events: none; box-shadow: 0 10px 28px #17202630; opacity: .95; cursor: grabbing; will-change: transform; }
+.menu-drag-ghost { position: fixed; top: 0; left: 0; z-index: 1000; pointer-events: none; box-shadow: 0 10px 28px #17202630; opacity: .95; cursor: grabbing; will-change: transform; transition: width .12s ease; }
 .menu-layout-hint { margin: 16px 4px 0; font-size: 11px; line-height: 1.8; }
 .menu-layout-groups { display: grid; gap: 24px; }
 .menu-library-group h4 { margin: 0 0 10px; color: var(--wp-muted); font-size: 12px; font-weight: 500; }

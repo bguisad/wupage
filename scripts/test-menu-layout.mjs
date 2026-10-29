@@ -71,7 +71,7 @@ try {
     await browser.resize(width, 950); assert.equal((await inspect()).overflow, false); await browser.capture(`custom-popup-${width}.png`);
   }
   await browser.api(`document.querySelector('[data-menu-add="debug"]').click();`);
-  const appended = await browser.api(`return [...document.querySelectorAll('#popupMenuPreview [data-popup-menu-item]')].filter(e=>!e.hasAttribute('data-popup-menu-hidden')).at(-1).dataset.popupMenuItem;`);
+  const appended = await browser.api(`return [...document.querySelectorAll('#popupMenuPreview [data-popup-menu-grid] [data-popup-menu-item]')].filter(e=>!e.hasAttribute('data-popup-menu-hidden')).at(-1).dataset.popupMenuItem;`);
   assert.equal(appended, 'debug');
   await browser.api(`for(const e of document.querySelectorAll('#popupMenuPreview [data-popup-menu-item]'))if(!e.hasAttribute('data-popup-menu-hidden'))e.click();`);
   await save();
@@ -97,19 +97,56 @@ try {
   assert.equal((await editorOrder()).length, 12, 'drop must not become a remove click');
   assert.equal(await browser.evaluate('return !!document.querySelector(".menu-drag-ghost");'), false);
 
+  // Links remain in an independent footer and cannot be reordered by pointer or keyboard.
+  const beforeLinks = await editorOrder();
+  await browser.evaluate(`document.querySelector('#popupMenuPreview [data-popup-menu-item="openWebsite"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',altKey:true,bubbles:true,cancelable:true}));`);
+  const linkFrom = await point('openWebsite'), linkTo = await point('floatingBall');
+  await browser.pointer([{type:'move',...linkFrom},{type:'down'},{type:'move',...linkTo},{type:'up'}]);
+  assert.deepEqual(await editorOrder(), beforeLinks);
+  assert.equal(await browser.evaluate(`return !!document.querySelector('#popupMenuPreview [data-popup-menu-footer] [data-popup-menu-item="openGithub"]')&&!document.querySelector('#popupMenuPreview [data-popup-menu-grid] [data-popup-menu-item="openWebsite"]');`),true);
+  checks.push('GitHub and website stay in their fixed footer and do not participate in pointer or keyboard sorting');
+
+  // Pair a short button with PDF, pull it into a separate row, and cancel the entire gesture.
+  const geometry = id => browser.evaluate(`const e=document.querySelector('#popupMenuPreview [data-popup-menu-item="${id}"]'),g=document.querySelector('#popupMenuPreview [data-popup-menu-grid]'),r=e.getBoundingClientRect();return {x:r.left,y:r.top,width:r.width,height:r.height,grid:g.clientWidth};`);
+  const pairFrom = await point('clearCache'), pdfBefore = await geometry('openPdfWorkspace');
+  await browser.pointer([{type:'move',...pairFrom},{type:'down'},{type:'move',x:pdfBefore.x+pdfBefore.width*.75,y:pdfBefore.y+pdfBefore.height/2}]);
+  await delay(220);
+  const pairedPdf = await geometry('openPdfWorkspace'), pairedCache = await geometry('clearCache');
+  assert.ok(pairedPdf.width < pairedPdf.grid*.6 && pairedCache.width < pairedCache.grid*.6,'long PDF row splits into two short buttons');
+  assert.ok(Math.abs(pairedPdf.y-pairedCache.y)<1);
+  await browser.capture('editor-paired-row.png');
+  await browser.pointer([{type:'move',x:pairedPdf.x+pairedPdf.width/2,y:pairedPdf.y-5}]); await delay(220);
+  const detachedPdf = await geometry('openPdfWorkspace');
+  assert.ok(detachedPdf.width > detachedPdf.grid*.95,'pulling the partner away restores the long row');
+  await browser.capture('editor-detached-row.png');
+  await browser.press('Escape'); await browser.pointer([{type:'up'}]);
+  assert.deepEqual(await editorOrder(),beforeLinks);
+  // Saving must persist row geometry, not just the flattened button order.
+  const saveFrom=await point('clearCache'),savePdf=await geometry('openPdfWorkspace');
+  await browser.pointer([{type:'move',...saveFrom},{type:'down'},{type:'move',x:savePdf.x+savePdf.width*.75,y:savePdf.y+savePdf.height/2},{type:'up'}]);
+  await browser.evaluate('document.querySelector("#save").click();');
+  await waitFor(()=>runtime({type:'GET_SETTINGS'}),value=>value.appearance.popupMenu.rows.some(row=>row.includes('openPdfWorkspace')&&row.includes('clearCache')),'paired row saved');
+  await browser.navigate(popupUrl); await waitFor(inspect,value=>!value.loading,'paired popup');
+  const savedPair=await browser.evaluate(`const a=document.querySelector('#openPdfWorkspace').getBoundingClientRect(),b=document.querySelector('#clearCache').getBoundingClientRect();return {same:Math.abs(a.y-b.y)<1,equal:Math.abs(a.width-b.width)<1,wide:a.width>document.querySelector('[data-popup-menu-grid]').clientWidth*.9};`);
+  assert.deepEqual(savedPair,{same:true,equal:true,wide:false});
+  checks.push('long rows magnetically split and rejoin within one drag; cancellation restores rows; saved and reopened popup preserves paired geometry');
+  await browser.navigate(optionsUrl);await browser.resize(1400,1100);
+  await waitFor(()=>browser.evaluate('return document.querySelectorAll("[data-menu-add]").length;'),count=>count===12,'paired editor');
+  await browser.evaluate('document.querySelector("#appearanceMenuTab").click();');
+
   // Cross-category pointer sorting, cancellation, and persistence in the real popup.
-  const from = await point('openWebsite'), to = await point('floatingBall');
+  const from = await point('debug'), to = await point('floatingBall');
   await browser.pointer([{type:'move',...from},{type:'down'},{type:'move',...to},{type:'up'}]); await delay(220);
-  const dragged = await editorOrder(); assert.equal(dragged[0], 'openWebsite');
-  const cancelFrom = await point('openWebsite'), cancelTo = await point('contextMenuTranslation');
+  const dragged = await editorOrder(); assert.equal(dragged[0], 'debug');
+  const cancelFrom = await point('debug'), cancelTo = await point('contextMenuTranslation');
   await browser.pointer([{type:'move',...cancelFrom},{type:'down'},{type:'move',...cancelTo}]);
   await browser.press('Escape'); await browser.pointer([{type:'up'}]);
   assert.deepEqual(await editorOrder(), dragged, 'Escape restores the complete original order');
-  const outsideFrom = await point('openWebsite');
+  const outsideFrom = await point('debug');
   await browser.pointer([{type:'move',...outsideFrom},{type:'down'},{type:'move',x:1300,y:100},{type:'up'}]);
   assert.deepEqual(await editorOrder(), dragged, 'dropping outside the preview cancels');
   await browser.evaluate('document.querySelector("#save").click();');
-  await waitFor(() => runtime({type:'GET_SETTINGS'}), value => value.appearance.popupMenu.order[0] === 'openWebsite', 'pointer order saved');
+  await waitFor(() => runtime({type:'GET_SETTINGS'}), value => value.appearance.popupMenu.order[0] === 'debug', 'pointer order saved');
   await browser.navigate(popupUrl);
   assert.deepEqual((await waitFor(inspect, value => !value.loading, 'saved popup')).items, dragged);
   checks.push('real pointer dragging snaps into grid slots, crosses categories, suppresses removal after drop, supports Escape and outside cancellation, and saves exact preview order');
@@ -122,7 +159,7 @@ try {
   assert.equal(await browser.evaluate('return document.querySelector("[data-menu-add=imageTranslation]").hidden;'), false, 'real click removes into the library');
   const clickAdd = await browser.evaluate('const r=document.querySelector("[data-menu-add=imageTranslation]").getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};');
   await browser.pointer([{type:'move',...clickAdd},{type:'down'},{type:'up'}]);
-  assert.equal((await editorOrder()).at(-1), 'imageTranslation', 'real click adds at the end');
+  assert.equal((await editorOrder()).filter(id=>!['openGithub','openWebsite'].includes(id)).at(-1), 'imageTranslation', 'real click adds at the end');
   assert.equal((await editorOrder()).length, 12);
   await browser.evaluate(`document.querySelector('#appearanceMenuTab').click();document.querySelector('#resetPopupMenu').click();
     for(const id of ['imageTranslation','videoTranslation','debug','openGithub','openWebsite'])document.querySelector('#popupMenuPreview [data-popup-menu-item="'+id+'"]').click();`);

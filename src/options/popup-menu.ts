@@ -1,4 +1,4 @@
-import { applyPopupMenuLayout, DEFAULT_POPUP_MENU, normalizePopupMenu, POPUP_MENU_GROUPS, POPUP_MENU_ITEMS,
+import { applyPopupMenuLayout, DEFAULT_POPUP_MENU, isPopupMenuLink, normalizePopupMenu, POPUP_MENU_GROUPS, POPUP_MENU_ITEMS,
   type PopupMenuItem, type PopupMenuLayout } from "../shared/popup-menu";
 import { uiIconMarkup } from "../shared/ui-icons";
 import "./popup-menu.css";
@@ -6,11 +6,12 @@ import "./popup-menu.css";
 export function setupPopupMenuControls(root: HTMLElement): { render: (value: unknown) => void; read: () => PopupMenuLayout } {
   const query = <T extends HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   const list = query("#popupMenuItems"), preview = query("#popupMenuPreview"), grid = query("[data-popup-menu-grid]");
-  const status = query("#popupMenuStatus");
+  const status = query("#popupMenuStatus"), footer = query("[data-popup-menu-footer]");
   const buttons = new Map<PopupMenuItem, HTMLButtonElement>(), available = new Map<PopupMenuItem, HTMLButtonElement>();
   let draft = normalizePopupMenu(undefined);
   let drag: { id: PopupMenuItem; pointer: number; x: number; y: number; lastX: number; lastY: number;
-    offsetX: number; offsetY: number; original: PopupMenuItem[]; ghost?: HTMLElement; frame?: number } | undefined;
+    offsetRatio: number; offsetY: number; originalRows: PopupMenuItem[][]; ghost?: HTMLElement; frame?: number;
+    snapArea?: { left: number; right: number; top: number; bottom: number } } | undefined;
   let suppressClick = false;
   const visible = () => draft.order.filter(id => !draft.hidden.includes(id));
   const label = (id: PopupMenuItem) => POPUP_MENU_ITEMS.find(item => item.id === id)!.label;
@@ -27,12 +28,12 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       const removeIcon = document.createElement("span"); removeIcon.className = "menu-preview-remove";
       removeIcon.setAttribute("aria-hidden", "true"); removeIcon.innerHTML = uiIconMarkup("cross"); button.append(removeIcon);
       button.setAttribute("aria-label", `移除${item.label}`);
-      button.title = `点击移除${item.label}；拖动或按 Alt + 方向键排序`;
+      button.title = isPopupMenuLink(item.id) ? `点击移除${item.label}；链接固定在底部` : `点击移除${item.label}；拖动或按 Alt + 方向键排序`;
       button.setAttribute("aria-describedby", "popupMenuKeyboardHint");
       if (item.group === "features" || item.id === "paragraphMode") button.className = "menu-preview-feature";
       if (item.id === "pageToggle") button.className = "menu-preview-primary";
       if (item.group === "links") button.className = "menu-preview-link";
-      buttons.set(item.id, button); grid.append(button);
+      buttons.set(item.id, button); (isPopupMenuLink(item.id) ? footer : grid).append(button);
       const add = document.createElement("button"); add.type = "button"; add.dataset.menuAdd = item.id;
       add.className = "menu-library-button"; add.setAttribute("aria-label", `添加${item.label}`);
       const plus = document.createElement("span"); plus.className = "menu-library-add-icon";
@@ -40,8 +41,12 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       add.append(document.createTextNode(item.label), plus); items.append(add); available.set(item.id, add);
       add.addEventListener("click", () => {
         draft.hidden = draft.hidden.filter(id => id !== item.id);
-        // Re-added entries join the end of the visible menu, rather than an old hidden slot.
-        draft.order = [...draft.order.filter(id => id !== item.id), item.id];
+        if (!isPopupMenuLink(item.id)) {
+          const last = draft.rows.at(-1);
+          if (last?.length === 1) last.push(item.id);
+          else draft.rows.push([item.id]);
+        }
+        draft = normalizePopupMenu(draft);
         paint(); button.focus({ preventScroll: true });
         status.textContent = `已添加${item.label}，保存后生效。`;
       });
@@ -51,9 +56,10 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       });
       button.addEventListener("keydown", event => {
         if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); remove(item.id); return; }
+        if (isPopupMenuLink(item.id)) return;
         if (!event.altKey || !["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const ids = visible(), from = ids.indexOf(item.id);
+        const ids = draft.rows.flat(), from = ids.indexOf(item.id);
         const to = event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1
           : from + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1);
         if (to < 0 || to >= ids.length || from === to) return;
@@ -64,7 +70,7 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
   }
 
   function remove(id: PopupMenuItem): void {
-    draft.hidden = [...draft.hidden, id]; paint(); available.get(id)!.focus({ preventScroll: true });
+    draft = normalizePopupMenu({ ...draft, hidden: [...draft.hidden, id] }); paint(); available.get(id)!.focus({ preventScroll: true });
     status.textContent = `已移除${label(id)}，可从右侧重新添加。保存后生效。`;
   }
 
@@ -75,19 +81,25 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       section.hidden = ![...section.querySelectorAll<HTMLButtonElement>("button")].some(button => !button.hidden);
     }
     query("#popupMenuLibraryEmpty").hidden = draft.hidden.length > 0;
-    query("#popupMenuPreviewEmpty").hidden = visible().length > 0;
+    query("#popupMenuPreviewEmpty").hidden = draft.rows.length > 0;
     query("#popupMenuSelectedCount").textContent = String(visible().length);
     query("#popupMenuAvailableCount").textContent = String(draft.hidden.length);
   }
 
   function move(id: PopupMenuItem, target: PopupMenuItem): void {
+    const ids = draft.rows.flat(), targetIndex = ids.indexOf(target);
+    ids.splice(ids.indexOf(id), 1); ids.splice(targetIndex, 0, id);
+    let offset = 0;
+    repaintRows(draft.rows.map(row => { const result = ids.slice(offset, offset + row.length); offset += row.length; return result; }));
+  }
+
+  function repaintRows(rows: PopupMenuItem[][]): void {
     const before = new Map([...buttons.values()].map(button => [button, button.getBoundingClientRect()]));
-    const targetIndex = draft.order.indexOf(target);
-    draft.order.splice(draft.order.indexOf(id), 1); draft.order.splice(targetIndex, 0, id);
+    draft = normalizePopupMenu({ ...draft, rows });
     paint();
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     for (const [button, rect] of before) {
-      if (button.dataset.popupMenuItem === id || button.hasAttribute("data-popup-menu-hidden")) continue;
+      if (button.dataset.popupMenuItem === drag?.id || button.hasAttribute("data-popup-menu-hidden")) continue;
       const after = button.getBoundingClientRect();
       const x = rect.left - after.left, y = rect.top - after.top;
       if (x || y) button.animate?.([{ transform: `translate(${x}px, ${y}px)` }, { transform: "none" }],
@@ -99,15 +111,32 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
     if (!drag?.ghost) return;
     const rect = grid.getBoundingClientRect(), { lastX: x, lastY: y } = drag;
     if (x < rect.left - 24 || x > rect.right + 24 || y < rect.top - 24 || y > rect.bottom + 24) return;
-    // offset positions describe the final slots even while other buttons animate into place.
-    const slots = visible().map(id => {
-      const button = buttons.get(id)!;
-      return { id, distance: Math.hypot(x - rect.left - button.offsetLeft - button.offsetWidth / 2,
-        y - rect.top - button.offsetTop - button.offsetHeight / 2) };
+    const area = drag.snapArea;
+    if (area && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) return;
+    // Read final row positions rather than animated rectangles or the moving placeholder.
+    const candidates = draft.rows.map(row => row.filter(id => id !== drag!.id)).filter(row => row.length).map(row => {
+      const button = buttons.get(row[0])!;
+      const top = rect.top + button.offsetTop, bottom = top + button.offsetHeight;
+      return { row, top, bottom, distance: y < top ? top - y : y > bottom ? y - bottom : 0 };
     });
-    const nearest = slots.reduce((a, b) => a.distance < b.distance ? a : b);
-    const current = slots.find(slot => slot.id === drag!.id)!;
-    if (nearest.id !== drag.id && nearest.distance + 12 < current.distance) move(drag.id, nearest.id);
+    if (!candidates.length) return;
+    const target = candidates.reduce((a, b) => a.distance < b.distance ? a : b);
+    const rows = draft.rows.map(row => row.filter(id => id !== drag!.id)).filter(row => row.length);
+    const index = rows.findIndex(row => row.includes(target.row[0]));
+    const edge = 9;
+    if (y < target.top + edge || y > target.bottom - edge) {
+      const after = y >= (target.top + target.bottom) / 2;
+      rows.splice(index + (after ? 1 : 0), 0, [drag.id]);
+      drag.snapArea = { left: rect.left - 24, right: rect.right + 24,
+        top: after ? target.bottom - edge : target.top - 24, bottom: after ? target.bottom + 24 : target.top + edge };
+    } else {
+      const column = x < rect.left + rect.width / 2 ? 0 : 1;
+      rows[index].splice(column, 0, drag.id);
+      if (rows[index].length > 2) rows.splice(index + 1, 0, [rows[index].pop()!]);
+      drag.snapArea = { left: column === 0 ? rect.left - 24 : rect.left + rect.width / 2 - 8,
+        right: column === 0 ? rect.left + rect.width / 2 + 8 : rect.right + 24, top: target.top + edge, bottom: target.bottom - edge };
+    }
+    if (JSON.stringify(rows) !== JSON.stringify(draft.rows)) repaintRows(rows);
   }
 
   function scrollWhileDragging(): void {
@@ -126,7 +155,7 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
     state.ghost.remove(); buttons.get(state.id)!.removeAttribute("data-menu-dragging");
     preview.removeAttribute("data-menu-sorting");
     if (root.hasPointerCapture?.(state.pointer)) root.releasePointerCapture(state.pointer);
-    if (cancel) { draft.order = state.original; paint(); }
+    if (cancel) { draft = normalizePopupMenu({ ...draft, rows: state.originalRows }); paint(); }
     suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
     buttons.get(state.id)!.focus({ preventScroll: true });
     status.textContent = cancel ? "已取消拖动。" : `已调整${label(state.id)}的位置，保存后生效。`;
@@ -138,7 +167,8 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
     if (!button) return;
     const rect = button.getBoundingClientRect();
     drag = { id: button.dataset.popupMenuItem as PopupMenuItem, pointer: event.pointerId, x: event.clientX, y: event.clientY,
-      lastX: event.clientX, lastY: event.clientY, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, original: [...draft.order] };
+      lastX: event.clientX, lastY: event.clientY, offsetRatio: (event.clientX - rect.left) / rect.width,
+      offsetY: event.clientY - rect.top, originalRows: draft.rows.map(row => [...row]) };
   });
   root.addEventListener("pointermove", event => {
     if (!drag || event.pointerId !== drag.pointer) return;
@@ -154,8 +184,10 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
       status.textContent = "拖近目标位置即可吸附，松开鼠标放置。按 Esc 取消。";
       scrollWhileDragging();
     }
-    drag.ghost.style.transform = `translate3d(${event.clientX - drag.offsetX}px, ${event.clientY - drag.offsetY}px, 0) scale(1.03)`;
     snap();
+    const width = buttons.get(drag.id)!.offsetWidth;
+    drag.ghost.style.width = `${width}px`;
+    drag.ghost.style.transform = `translate3d(${event.clientX - width * drag.offsetRatio}px, ${event.clientY - drag.offsetY}px, 0) scale(1.03)`;
   });
   root.addEventListener("pointerup", event => {
     if (!drag || drag.pointer !== event.pointerId) return;
@@ -164,7 +196,7 @@ export function setupPopupMenuControls(root: HTMLElement): { render: (value: unk
   });
   root.addEventListener("pointercancel", () => finish(true));
   root.addEventListener("lostpointercapture", () => finish(true));
-  root.addEventListener("keydown", event => { if (event.key === "Escape" && drag) { event.preventDefault(); finish(true); } });
+  document.addEventListener("keydown", event => { if (event.key === "Escape" && drag) { event.preventDefault(); finish(true); } });
   // A pending press can leave the editor before it captures the pointer.
   document.addEventListener("pointerup", () => { if (drag && !drag.ghost) drag = undefined; });
   window.addEventListener("blur", () => finish(true));
