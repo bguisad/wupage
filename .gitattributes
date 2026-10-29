@@ -5,3 +5,6 @@ vendor/ocr/*.mjs linguist-generated=true
 vendor/ocr/*-LICENSE.txt linguist-generated=true
 vendor/ocr/*-NOTICES.txt linguist-generated=true
 vendor/ocr/*.wasm binary
+public/pdf-fonts/*.ttf binary
+public/pdf-fonts/*.txt text eol=lf
+public/pdf-fonts/*.json text eol=lf
