@@ -301,7 +301,10 @@ describe("LLM provider queue", () => {
     vi.stubGlobal("chrome", {
       storage: {
         local: {
-          get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+          get: vi.fn(async (key: string | string[]) => {
+            const keys = Array.isArray(key) ? key : [key];
+            return Object.fromEntries(keys.filter((item) => stored.has(item)).map((item) => [item, stored.get(item)!]));
+          }),
           set: vi.fn(async (items: Record<string, string>) => {
             Object.entries(items).forEach(([key, value]) => stored.set(key, value));
           })
@@ -342,7 +345,10 @@ describe("LLM provider queue", () => {
   it("invalidates cached output after model, prompt, or source language changes", async () => {
     const stored = new Map<string, string>();
     vi.stubGlobal("chrome", { storage: { local: {
-      get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+      get: vi.fn(async (key: string | string[]) => {
+        const keys = Array.isArray(key) ? key : [key];
+        return Object.fromEntries(keys.filter((item) => stored.has(item)).map((item) => [item, stored.get(item)!]));
+      }),
       set: vi.fn(async (items: Record<string, string>) => {
         Object.entries(items).forEach(([key, value]) => stored.set(key, value));
       })
@@ -386,7 +392,10 @@ describe("LLM provider queue", () => {
   it("avoids legacy PDF caches and revalidates protected cache entries before reuse", async () => {
     const stored = new Map<string, string>();
     vi.stubGlobal("chrome", { storage: { local: {
-      get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+      get: vi.fn(async (key: string | string[]) => {
+        const keys = Array.isArray(key) ? key : [key];
+        return Object.fromEntries(keys.filter((item) => stored.has(item)).map((item) => [item, stored.get(item)!]));
+      }),
       set: vi.fn(async (items: Record<string, string>) => {
         Object.entries(items).forEach(([key, value]) => stored.set(key, value));
       })
@@ -415,7 +424,10 @@ describe("LLM provider queue", () => {
   it("caches only the locally repaired result after persistent marker loss", async () => {
     const stored = new Map<string, string>();
     vi.stubGlobal("chrome", { storage: { local: {
-      get: vi.fn(async (key: string) => ({ [key]: stored.get(key) })),
+      get: vi.fn(async (key: string | string[]) => {
+        const keys = Array.isArray(key) ? key : [key];
+        return Object.fromEntries(keys.filter((item) => stored.has(item)).map((item) => [item, stored.get(item)!]));
+      }),
       set: vi.fn(async (items: Record<string, string>) => { Object.entries(items).forEach(([key, value]) => stored.set(key, value)); })
     } } });
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {

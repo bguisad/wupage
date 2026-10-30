@@ -70,7 +70,10 @@ beforeEach(async () => {
   vi.stubGlobal("chrome", {
     runtime: { getURL: (path: string) => `chrome-extension://wupage-test${path}` },
     storage: { local: {
-      get: vi.fn(async (key: string) => ({ [key]: stored[key] })),
+      get: vi.fn(async (key: string | string[]) => {
+      const keys = Array.isArray(key) ? key : [key];
+      return Object.fromEntries(keys.filter((item) => item in stored).map((item) => [item, stored[item]]));
+    }),
       set: vi.fn(async (values: Record<string, unknown>) => { Object.assign(stored, values); })
     } },
     declarativeNetRequest: {
