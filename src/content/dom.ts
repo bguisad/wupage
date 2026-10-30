@@ -264,6 +264,8 @@ const HIDDEN_SCAN_ROOT_BATCH = 400;
  */
 const HIDDEN_SCAN_ROOT_BUDGET = 4096;
 let hiddenScanOverflowRoot: Element | null = null;
+// Re-queued hidden roots must not postpone overflow beyond the current round.
+let hiddenScanRootsBeforeOverflow = 0;
 
 function noteHiddenScanCandidate(element: Element | null): void {
   if (!element) return;
@@ -271,13 +273,17 @@ function noteHiddenScanCandidate(element: Element | null): void {
     // Detached subtrees would otherwise hold the budget down for the rest of
     // the session; pruning costs nothing while the queue is below the limit.
     for (const candidate of hiddenScanRoots) {
-      if (!candidate.isConnected) hiddenScanRoots.delete(candidate);
+      if (!candidate.isConnected) {
+        hiddenScanRoots.delete(candidate);
+        hiddenScanRootsBeforeOverflow = Math.max(0, hiddenScanRootsBeforeOverflow - 1);
+      }
     }
   }
   if (hiddenScanRoots.size < HIDDEN_SCAN_ROOT_BUDGET) {
     hiddenScanRoots.add(element);
     return;
   }
+  if (!hiddenScanOverflowRoot) hiddenScanRootsBeforeOverflow = hiddenScanRoots.size;
   hiddenScanOverflowRoot = commonHiddenScanAncestor(hiddenScanOverflowRoot, element);
 }
 
@@ -293,6 +299,7 @@ function commonHiddenScanAncestor(current: Element | null, element: Element): El
 function clearHiddenScanCandidates(): void {
   hiddenScanRoots.clear();
   hiddenScanOverflowRoot = null;
+  hiddenScanRootsBeforeOverflow = 0;
 }
 
 interface DeferredBlockText {
@@ -498,22 +505,21 @@ export async function collectTextSegmentsProgressive(
  * the whole document while the queue still advances towards the rest.
  */
 export function takeHiddenScanRoots(limit = HIDDEN_SCAN_ROOT_BATCH): Element[] {
+  if (limit <= 0) return [];
   const roots: Element[] = [];
   for (const element of hiddenScanRoots) {
-    if (!element.isConnected) {
-      hiddenScanRoots.delete(element);
-      continue;
-    }
-    if (roots.length >= limit) break;
+    if (roots.length >= limit || (hiddenScanOverflowRoot && hiddenScanRootsBeforeOverflow === 0)) break;
     hiddenScanRoots.delete(element);
-    roots.push(element);
+    hiddenScanRootsBeforeOverflow = Math.max(0, hiddenScanRootsBeforeOverflow - 1);
+    if (element.isConnected) roots.push(element);
   }
-  // The collapsed overflow can cost a document-sized scan, so it only joins once
-  // the queued subtrees have had their retry; that keeps the cost off every
-  // scroll of a page that stays over budget.
-  if (hiddenScanOverflowRoot && !hiddenScanRoots.size) {
+  // A hidden root gets re-queued after its retry, so the queue may never empty.
+  // Give overflow a turn after the roots that were ahead of it have had theirs,
+  // keeping it within the batch limit even when the round ends on a full batch.
+  if (hiddenScanOverflowRoot && (!hiddenScanRootsBeforeOverflow || !hiddenScanRoots.size) && roots.length < limit) {
     const overflow = hiddenScanOverflowRoot;
     hiddenScanOverflowRoot = null;
+    hiddenScanRootsBeforeOverflow = 0;
     if (overflow.isConnected) roots.push(overflow);
   }
   return roots;

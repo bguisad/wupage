@@ -1848,6 +1848,47 @@ describe("content DOM translation extraction", () => {
     }
   });
 
+  it.each([400, 128])("reaches overflow while earlier candidates keep re-queuing with a batch of %i", (batchSize) => {
+    document.body.innerHTML = `<main>${Array.from({ length: 4097 }, (_, index) =>
+      `<p id="pending-${index}">Hidden paragraph number ${index}.</p>`).join("")}</main><div id="overlay"></div>`;
+    stubLayout("", { style: (element) => ({
+      display: element.matches("p") && element.id !== "pending-4096" ? "none" : "block"
+    }) });
+    const overlay = document.querySelector("#overlay")!;
+    let covered = true;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true, value: () => covered ? overlay : document.body
+    });
+    try {
+      expect(collectAdditionalTextSegments(document.body)).toEqual([]);
+      const tail = document.querySelector("#pending-4096")!;
+      let retriedTail = false;
+      const roundLimit = Math.ceil(4096 / batchSize) + 1;
+      // A retry of the ordinary candidates puts them back in the queue. The
+      // overflow must still get a turn, including when it also stays hidden.
+      for (let round = 0; round < roundLimit && !retriedTail; round++) {
+        const roots = takeHiddenScanRoots(batchSize);
+        expect(roots.length).toBeLessThanOrEqual(batchSize);
+        for (const root of roots) {
+          if (root.contains(tail)) retriedTail = true;
+          expect(collectAdditionalTextSegments(root)).toEqual([]);
+        }
+      }
+      expect(retriedTail).toBe(true);
+
+      covered = false;
+      const texts: string[] = [];
+      for (let round = 0; round < roundLimit && !texts.length; round++) {
+        const roots = takeHiddenScanRoots(batchSize);
+        expect(roots.length).toBeLessThanOrEqual(batchSize);
+        for (const root of roots) texts.push(...collectAdditionalTextSegments(root).map(segment => segment.text));
+      }
+      expect(texts).toEqual(["Hidden paragraph number 4096."]);
+    } finally {
+      delete (document as unknown as { elementFromPoint?: Document["elementFromPoint"] }).elementFromPoint;
+    }
+  }, 20000);
+
   it("keeps container text that a split progressive scan would skip", async () => {
     const sections = Array.from({ length: 61 }, (_, index) =>
       `<section><p>Readable section number ${index}.</p></section>`).join("");
