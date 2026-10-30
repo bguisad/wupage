@@ -378,13 +378,22 @@ function scheduleNearbySegments(session: TranslationSession, initial = false): v
 
 function pumpQueue(session: TranslationSession): void {
   if (!isActive(session) || session.providerPaused) return;
-  while (session.activeCount < session.maxConcurrency && session.queue.length) {
+  const launches: TextSegment[][] = [];
+  while (session.activeCount + launches.length < session.maxConcurrency && session.queue.length) {
     const batch = session.queue.shift();
     if (!batch) break;
     const runnable = batch.filter((segment) => session.entries.get(segment.id)?.status === "queued");
     if (!runnable.length) continue;
-    void runBatch(session, runnable);
+    launches.push(runnable);
   }
+  if (!launches.length) return;
+  // Every guard forces a layout, so batches that start together must share one
+  // guard: rendering placeholders per batch multiplied the reflow cost by the
+  // concurrency factor on long documents.
+  preserveViewportPosition(() => {
+    for (const segments of launches) renderTranslationPlaceholders(segments);
+  }, launches.flat());
+  for (const segments of launches) void runBatch(session, segments);
 }
 
 async function runBatch(session: TranslationSession, segments: TextSegment[]): Promise<void> {
@@ -393,7 +402,6 @@ async function runBatch(session: TranslationSession, segments: TextSegment[]): P
     const entry = session.entries.get(segment.id);
     if (entry) entry.status = "running";
   });
-  preserveViewportPosition(() => renderTranslationPlaceholders(segments), segments);
 
   try {
     const data = await sendRuntimeRequest<TranslateBatchResponse>({

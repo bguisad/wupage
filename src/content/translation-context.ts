@@ -30,7 +30,20 @@ export function buildTranslationContext(focusElements: Element[] = []): string |
   const blocks = [root, ...root.querySelectorAll<HTMLElement>(`${CONTEXT_BLOCK_SELECTOR},div`)]
     .filter((element) => element.matches(CONTEXT_BLOCK_SELECTOR) || isDivProseBlock(element))
     .filter(eligible);
-  const textByBlock = new Map(blocks.map((block) => [block, readSourceText(block, eligible)]));
+  // Reading every block's text up front was the single most expensive part of
+  // building context: a document-order walk per block on a long article. Only
+  // the excerpts that survive de-duplication are ever used, so resolve text on
+  // demand instead.
+  const textByBlock = new Map<Element, string>();
+  const textOf = (block: Element): string => {
+    const cached = textByBlock.get(block);
+    if (cached !== undefined) return cached;
+    const text = readSourceText(block, eligible);
+    textByBlock.set(block, text);
+    return text;
+  };
+  const indexByBlock = new Map<Element, number>();
+  blocks.forEach((block, index) => { if (!indexByBlock.has(block)) indexByBlock.set(block, index); });
   const excerpts: string[] = [];
   const seen = new Set<string>();
   let excerptLength = 0;
@@ -44,22 +57,22 @@ export function buildTranslationContext(focusElements: Element[] = []): string |
   };
 
   for (const focus of focusElements) {
-    const index = blocks.findIndex((block) => block === focus || block.contains(focus) || focus.contains(block));
+    const index = findFocusBlockIndex(focus, blocks, indexByBlock);
     if (index < 0) continue;
-    addExcerpt(textByBlock.get(blocks[index]) ?? "");
-    const precedingHeading = blocks
-      .slice(0, index + 1)
-      .reverse()
-      .find((block) => block.matches("h1,h2,h3"));
-    if (precedingHeading) addExcerpt(textByBlock.get(precedingHeading) ?? "");
+    addExcerpt(textOf(blocks[index]));
+    let precedingHeading: Element | undefined;
+    for (let scan = index; scan >= 0; scan -= 1) {
+      if (blocks[scan].matches("h1,h2,h3")) { precedingHeading = blocks[scan]; break; }
+    }
+    if (precedingHeading) addExcerpt(textOf(precedingHeading));
     for (const block of blocks.slice(Math.max(0, index - 2), index + 3)) {
-      addExcerpt(textByBlock.get(block) ?? "");
+      addExcerpt(textOf(block));
     }
   }
 
   for (const block of blocks) {
     if (excerptLength >= GLOBAL_EXCERPT_CHARS) break;
-    addExcerpt(textByBlock.get(block) ?? "");
+    addExcerpt(textOf(block));
   }
 
   const title = normalizeText(document.title).slice(0, 240);
@@ -69,6 +82,29 @@ export function buildTranslationContext(focusElements: Element[] = []): string |
   ].filter(Boolean);
   if (!sections.length) return undefined;
   return sections.join("\n").slice(0, MAX_CONTEXT_CHARS);
+}
+
+/**
+ * The first block in document order that is the focus, contains it, or sits
+ * inside it. Ancestors always come first in document order, so the outermost
+ * mapped ancestor answers the common case without scanning the block list.
+ */
+function findFocusBlockIndex(
+  focus: Element,
+  blocks: Element[],
+  indexByBlock: Map<Element, number>
+): number {
+  let ancestor: Element | null = focus.parentElement;
+  let ancestorIndex = -1;
+  while (ancestor) {
+    const index = indexByBlock.get(ancestor);
+    if (index !== undefined) ancestorIndex = index;
+    ancestor = ancestor.parentElement;
+  }
+  if (ancestorIndex >= 0) return ancestorIndex;
+  const own = indexByBlock.get(focus);
+  if (own !== undefined) return own;
+  return blocks.findIndex((block) => focus.contains(block));
 }
 
 function findReadableRoot(focusElements: Element[]): Element | null {
