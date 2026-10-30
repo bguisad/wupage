@@ -243,17 +243,56 @@ let segmentIdCounter = 0;
 /**
  * The elements that held text a full scan rejected only because it was not
  * rendered at that moment. Scrolling can reveal such text without any DOM
- * mutation, so these are the subtrees a viewport change has to revisit, instead
- * of walking the whole document again.
- * those subtrees instead of walking the whole document. Candidates stay here
- * until they scan successfully: a single rescan cannot prove that text which is
- * still covered now will stay covered, and the next scroll may uncover it.
+ * mutation, so these are the subtrees a viewport change has to revisit instead
+ * of walking the whole document again. Candidates stay queued until they scan
+ * successfully: a single rescan cannot prove that text which is still covered
+ * now will stay covered, and the next scroll may uncover it.
  */
 const hiddenScanRoots = new Set<Element>();
-const HIDDEN_SCAN_ROOT_LIMIT = 400;
+/**
+ * One scroll can uncover hundreds of subtrees, and rescanning every one of them
+ * on the same event made a scroll cost as much as a full scan. A viewport event
+ * takes a bounded batch instead; the queue keeps the rest for later events, in
+ * insertion order, so no candidate waits forever.
+ */
+const HIDDEN_SCAN_ROOT_BATCH = 400;
+/**
+ * Pages that keep thousands of subtrees unrendered would otherwise grow the
+ * queue without bound. Past this budget the overflow collapses into the smallest
+ * ancestor that covers it, so that text stays reachable from a later scroll
+ * instead of being dropped until the next whole-document scan notices it.
+ */
+const HIDDEN_SCAN_ROOT_BUDGET = 4096;
+let hiddenScanOverflowRoot: Element | null = null;
 
 function noteHiddenScanCandidate(element: Element | null): void {
-  if (element && hiddenScanRoots.size < HIDDEN_SCAN_ROOT_LIMIT) hiddenScanRoots.add(element);
+  if (!element) return;
+  if (hiddenScanRoots.size >= HIDDEN_SCAN_ROOT_BUDGET) {
+    // Detached subtrees would otherwise hold the budget down for the rest of
+    // the session; pruning costs nothing while the queue is below the limit.
+    for (const candidate of hiddenScanRoots) {
+      if (!candidate.isConnected) hiddenScanRoots.delete(candidate);
+    }
+  }
+  if (hiddenScanRoots.size < HIDDEN_SCAN_ROOT_BUDGET) {
+    hiddenScanRoots.add(element);
+    return;
+  }
+  hiddenScanOverflowRoot = commonHiddenScanAncestor(hiddenScanOverflowRoot, element);
+}
+
+function commonHiddenScanAncestor(current: Element | null, element: Element): Element {
+  if (!current || !current.isConnected) return element;
+  if (current.contains(element)) return current;
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.contains(current)) return ancestor;
+  }
+  return element;
+}
+
+function clearHiddenScanCandidates(): void {
+  hiddenScanRoots.clear();
+  hiddenScanOverflowRoot = null;
 }
 
 interface DeferredBlockText {
@@ -417,7 +456,6 @@ export async function collectTextSegmentsProgressive(
 ): Promise<TextSegment[]> {
   const body = document.body;
   clearNodeTracking();
-  hiddenScanRoots.clear();
   if (!body) return [];
   // The page can change while the scan yields; remember where so the text that
   // appeared in between is collected rather than silently dropped.
@@ -454,13 +492,30 @@ export async function collectTextSegmentsProgressive(
 }
 
 /**
- * Hands the pending candidates to a viewport-driven rescan. They are cleared on
- * return: the rescan re-adds the ones that are still hidden, so repeated scrolls
- * keep retrying exactly those subtrees instead of the whole document.
+ * Hands the next batch of pending candidates to a viewport-driven rescan. Taken
+ * candidates leave the queue and the rescan re-adds the ones that are still
+ * hidden, so repeated scrolls keep retrying exactly those subtrees instead of
+ * the whole document while the queue still advances towards the rest.
  */
-export function takeHiddenScanRoots(): Element[] {
-  const roots = [...hiddenScanRoots].filter((element) => element.isConnected);
-  hiddenScanRoots.clear();
+export function takeHiddenScanRoots(limit = HIDDEN_SCAN_ROOT_BATCH): Element[] {
+  const roots: Element[] = [];
+  for (const element of hiddenScanRoots) {
+    if (!element.isConnected) {
+      hiddenScanRoots.delete(element);
+      continue;
+    }
+    if (roots.length >= limit) break;
+    hiddenScanRoots.delete(element);
+    roots.push(element);
+  }
+  // The collapsed overflow can cost a document-sized scan, so it only joins once
+  // the queued subtrees have had their retry; that keeps the cost off every
+  // scroll of a page that stays over budget.
+  if (hiddenScanOverflowRoot && !hiddenScanRoots.size) {
+    const overflow = hiddenScanOverflowRoot;
+    hiddenScanOverflowRoot = null;
+    if (overflow.isConnected) roots.push(overflow);
+  }
   return roots;
 }
 
@@ -771,7 +826,7 @@ function collectTextSegmentsFromRoot(
   // already cleared the candidates and its per-chunk results must survive the
   // body sweep.
   if (!directTextOnly && (root === document.body || root === document.documentElement)) {
-    hiddenScanRoots.clear();
+    clearHiddenScanCandidates();
   }
   // Grouping is pure for the duration of one scan (collection never mutates the
   // page), and the same ancestor answers for every inline child, so one lookup
@@ -1088,7 +1143,7 @@ function clearNodeTracking(): void {
   trackedAttributes = [];
   trackedImageTexts = [];
   deferredBlockTexts.clear();
-  hiddenScanRoots.clear();
+  clearHiddenScanCandidates();
   protectedTokensById = new Map();
   sourceTextById = new Map();
   renderedById.clear();

@@ -621,6 +621,27 @@ describe("viewport page translation", () => {
       .toBe("译文：Previously covered email body."));
   });
 
+  it("reaches covered paragraphs that overflow one rescan batch", async () => {
+    const count = 401;
+    document.body.innerHTML = `<main>${Array.from({ length: count }, (_, index) =>
+      `<p data-top="0">Covered paragraph ${index}.</p>`).join("")}</main><div id="overlay"></div>`;
+    let covered = true;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (covered ? document.querySelector("#overlay") : document.body)
+    });
+    translateNormally();
+    await startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    covered = false;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(400), { timeout: 10000 });
+
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(count), { timeout: 10000 });
+  });
+
   it("keeps watching when the initial email view is empty", async () => {
     document.body.innerHTML = `<div role="main"></div>`;
     translateNormally();

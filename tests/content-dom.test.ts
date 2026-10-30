@@ -18,7 +18,8 @@ import {
   renderTargetTranslation,
   renderTranslationPlaceholders,
   renderTranslations,
-  setTranslationDisplayMode
+  setTranslationDisplayMode,
+  takeHiddenScanRoots
 } from "../src/content/dom";
 import { injectContentStyles } from "../src/content/styles";
 
@@ -1812,6 +1813,39 @@ describe("content DOM translation extraction", () => {
     expect(segment.text).toContain("at the end.");
     expect(segment.text).not.toContain("HIDDEN_ONE");
     expect(segment.text).not.toContain("HIDDEN_TWO");
+  });
+
+  it.each([399, 400, 401, 1000])("keeps every one of %i covered paragraphs reachable", (count) => {
+    document.body.innerHTML = `<main>${Array.from({ length: count }, (_, index) =>
+      `<p>Covered paragraph ${index}.</p>`).join("")}</main>`;
+    stubLayout();
+    const overlay = document.createElement("div");
+    document.body.append(overlay);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
+    try {
+      expect(collectAdditionalTextSegments(document.body)).toEqual([]);
+
+      const seen = new Set<Element>();
+      let rounds = 0;
+      let firstBatch = 0;
+      while (seen.size < count && rounds < count) {
+        const roots = takeHiddenScanRoots();
+        if (!roots.length) break;
+        if (!rounds) firstBatch = roots.length;
+        rounds += 1;
+        for (const root of roots) {
+          seen.add(root);
+          // The overlay still covers the text, so this rescan re-queues the root.
+          collectAdditionalTextSegments(root);
+        }
+      }
+
+      expect(firstBatch).toBe(Math.min(count, 400));
+      expect(seen.size).toBe(count);
+      expect(rounds).toBeLessThanOrEqual(Math.ceil(count / 400) + 1);
+    } finally {
+      delete (document as unknown as { elementFromPoint?: Document["elementFromPoint"] }).elementFromPoint;
+    }
   });
 
   it("keeps container text that a split progressive scan would skip", async () => {
