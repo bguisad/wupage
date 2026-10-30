@@ -8,6 +8,7 @@ import {
   collectParagraphTextSegments,
   collectAdditionalTextSegments,
   collectTextSegments,
+  collectTextSegmentsProgressive,
   findTranslatableParagraph,
   hasPageTranslations,
   hasTranslationsIn,
@@ -1798,6 +1799,32 @@ describe("content DOM translation extraction", () => {
     renderTargetTranslation(target, "覆盖实现");
     expect(target.querySelector(".wupage-translation-pending")).toBeNull();
     expect(target.querySelector(".wupage-translation")?.textContent).toBe("覆盖实现");
+  });
+
+  it("drops every hidden inline run from a grouped block", () => {
+    document.body.innerHTML = `<main><p id="prose">Visible prose <span class="hidden">HIDDEN_ONE</span> continues with <em>readable words</em><span class="hidden">HIDDEN_TWO</span> at the end.</p></main>`;
+    stubLayout("", { style: (element) => ({ display: element.closest(".hidden") ? "none" : "block" }) });
+
+    const [segment] = collectTextSegments();
+
+    expect(segment.text).toContain("Visible prose");
+    expect(segment.text).toContain("readable words");
+    expect(segment.text).toContain("at the end.");
+    expect(segment.text).not.toContain("HIDDEN_ONE");
+    expect(segment.text).not.toContain("HIDDEN_TWO");
+  });
+
+  it("keeps container text that a split progressive scan would skip", async () => {
+    const sections = Array.from({ length: 61 }, (_, index) =>
+      `<section><p>Readable section number ${index}.</p></section>`).join("");
+    document.body.innerHTML = `<article>Introduction before the sections.${sections}</article>`;
+    stubLayout();
+
+    const texts = (await collectTextSegmentsProgressive()).map((segment) => segment.text);
+
+    expect(texts).toContain("Introduction before the sections.");
+    expect(texts).toContain("Readable section number 60.");
+    expect(texts).toHaveLength(62);
   });
 });
 

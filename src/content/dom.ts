@@ -241,11 +241,20 @@ const stableReplacementSources = new WeakSet<Element>();
 let targetIdCounter = 0;
 let segmentIdCounter = 0;
 /**
- * Set when a full scan rejected text only because it was not rendered at that
- * moment. Scrolling can reveal such text without any DOM mutation, so it is the
- * only condition that justifies rescanning the page after a viewport change.
+ * The elements that held text a full scan rejected only because it was not
+ * rendered at that moment. Scrolling can reveal such text without any DOM
+ * mutation, so these are the subtrees a viewport change has to revisit, instead
+ * of walking the whole document again.
+ * those subtrees instead of walking the whole document. Candidates stay here
+ * until they scan successfully: a single rescan cannot prove that text which is
+ * still covered now will stay covered, and the next scroll may uncover it.
  */
-let hiddenScanCandidates = false;
+const hiddenScanRoots = new Set<Element>();
+const HIDDEN_SCAN_ROOT_LIMIT = 400;
+
+function noteHiddenScanCandidate(element: Element | null): void {
+  if (element && hiddenScanRoots.size < HIDDEN_SCAN_ROOT_LIMIT) hiddenScanRoots.add(element);
+}
 
 interface DeferredBlockText {
   block: Element;
@@ -362,10 +371,22 @@ function yieldToMain(): Promise<void> {
   });
 }
 
+interface ScanChunk {
+  root: Element;
+  /** Collect only the text whose parent is exactly this element. */
+  directTextOnly: boolean;
+}
+
 // Splits the body into subtrees small enough that scanning one stays under a
 // frame. The count runs before any visibility work, so it costs one cheap walk.
-function collectScanChunkRoots(root: Element): Element[] {
-  const roots: Element[] = [];
+function collectScanChunkRoots(root: Element): ScanChunk[] {
+  const chunks: ScanChunk[] = [];
+  const hasDirectText = (element: Element): boolean => {
+    for (let node = element.firstChild; node; node = node.nextSibling) {
+      if (node.nodeType === Node.TEXT_NODE && NON_BLANK_TEXT.test((node as Text).data)) return true;
+    }
+    return false;
+  };
   const visit = (element: Element): void => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let count = 0;
@@ -375,13 +396,16 @@ function collectScanChunkRoots(root: Element): Element[] {
       if (count > SCAN_CHUNK_TEXT_NODES) break;
     }
     if (count <= SCAN_CHUNK_TEXT_NODES || !element.firstElementChild) {
-      roots.push(element);
+      chunks.push({ root: element, directTextOnly: false });
       return;
     }
+    // Descending past a container leaves its own text inside no child chunk, so
+    // that text is collected as a slice of its own before recursing.
+    if (hasDirectText(element)) chunks.push({ root: element, directTextOnly: true });
     for (const child of Array.from(element.children)) visit(child);
   };
   for (const child of Array.from(root.children)) visit(child);
-  return roots;
+  return chunks;
 }
 
 /**
@@ -393,7 +417,7 @@ export async function collectTextSegmentsProgressive(
 ): Promise<TextSegment[]> {
   const body = document.body;
   clearNodeTracking();
-  hiddenScanCandidates = false;
+  hiddenScanRoots.clear();
   if (!body) return [];
   // The page can change while the scan yields; remember where so the text that
   // appeared in between is collected rather than silently dropped.
@@ -409,8 +433,10 @@ export async function collectTextSegmentsProgressive(
   let sliceStarted = performance.now();
   try {
     for (const chunk of collectScanChunkRoots(body)) {
-      if (!chunk.isConnected) continue;
-      segments.push(...collectTextSegmentsFromRoot(chunk, false, translateCodeComments));
+      if (!chunk.root.isConnected) continue;
+      segments.push(...collectTextSegmentsFromRoot(
+        chunk.root, false, translateCodeComments, chunk.directTextOnly
+      ));
       if (performance.now() - sliceStarted < SCAN_SLICE_MS) continue;
       await yieldToMain();
       sliceStarted = performance.now();
@@ -428,11 +454,14 @@ export async function collectTextSegmentsProgressive(
 }
 
 /**
- * Reports whether the last full scan left text behind that was hidden at the
- * time. Callers use it to skip a whole-document rescan on every scroll event.
+ * Hands the pending candidates to a viewport-driven rescan. They are cleared on
+ * return: the rescan re-adds the ones that are still hidden, so repeated scrolls
+ * keep retrying exactly those subtrees instead of the whole document.
  */
-export function hasHiddenScanCandidates(): boolean {
-  return hiddenScanCandidates;
+export function takeHiddenScanRoots(): Element[] {
+  const roots = [...hiddenScanRoots].filter((element) => element.isConnected);
+  hiddenScanRoots.clear();
+  return roots;
 }
 
 // Applications may reuse a text node or discard our rendered output. Release
@@ -739,8 +768,11 @@ function collectTextSegmentsFromRoot(
 ): TextSegment[] {
   if (resetTracking) clearNodeTracking();
   // A whole-document scan starts from a clean slate; the progressive scanner
-  // already reset the flag and its per-chunk results must survive the body sweep.
-  if (!directTextOnly && (root === document.body || root === document.documentElement)) hiddenScanCandidates = false;
+  // already cleared the candidates and its per-chunk results must survive the
+  // body sweep.
+  if (!directTextOnly && (root === document.body || root === document.documentElement)) {
+    hiddenScanRoots.clear();
+  }
   // Grouping is pure for the duration of one scan (collection never mutates the
   // page), and the same ancestor answers for every inline child, so one lookup
   // per element removes the repeated closest()/getComputedStyle chains.
@@ -761,7 +793,7 @@ function collectTextSegmentsFromRoot(
       if (shouldSkipElement(parent, true, visibility)) return NodeFilter.FILTER_REJECT;
       if (isStructuredListMetadata(parent)) return NodeFilter.FILTER_REJECT;
       if (!visibility.isTextNodeVisuallyRendered(text)) {
-        hiddenScanCandidates = true;
+        noteHiddenScanCandidate(parent);
         return NodeFilter.FILTER_REJECT;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -1056,6 +1088,7 @@ function clearNodeTracking(): void {
   trackedAttributes = [];
   trackedImageTexts = [];
   deferredBlockTexts.clear();
+  hiddenScanRoots.clear();
   protectedTokensById = new Map();
   sourceTextById = new Map();
   renderedById.clear();
@@ -1087,7 +1120,7 @@ function collectImageTextSegments(
     if (!visibility.isElementVisuallyRendered(candidate)) {
       // A lazy image only gains its first rendered area after it loads or
       // scrolls into view, so the viewport change is the event worth rescanning.
-      hiddenScanCandidates = true;
+      noteHiddenScanCandidate(candidate);
       continue;
     }
     const sourceValue = candidate.getAttribute("alt") ?? "";
@@ -1196,7 +1229,7 @@ function collectAttributeSegments(
     if (!(candidate instanceof HTMLElement) || trackedElements.has(candidate)) continue;
     if (candidate.closest(`.${TRANSLATION_CLASS}, #wupage-floating-menu, #wupage-debug-panel`)) continue;
     if (!visibility.isElementVisuallyRendered(candidate)) {
-      hiddenScanCandidates = true;
+      noteHiddenScanCandidate(candidate);
       continue;
     }
     const sourceValue = candidate.getAttribute("placeholder") ?? "";
@@ -2043,7 +2076,10 @@ function removeUnrenderedCloneText(
 ): void {
   const sourceWalker = source.ownerDocument.createTreeWalker(source, NodeFilter.SHOW_TEXT);
   const cloneWalker = clone.ownerDocument.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
-  // Walk both trees in lockstep instead of collecting every pair first.
+  // Walk both trees in lockstep. Removed nodes are collected instead of deleted
+  // in place: detaching the walker's current node strands it, and the rest of the
+  // block would then keep text that was supposed to be dropped.
+  const hidden: Text[] = [];
   while (sourceWalker.nextNode() && cloneWalker.nextNode()) {
     const sourceText = sourceWalker.currentNode as Text;
     // A deferred read replays the decision made during the scan, so a block read
@@ -2054,9 +2090,10 @@ function removeUnrenderedCloneText(
     // A descendant may belong to its own label, control or paragraph. Its
     // text must never also appear in an ancestor's translation request.
     if (!keep || findGroupingBlock(sourceText.parentElement) !== source) {
-      (cloneWalker.currentNode as Text).remove();
+      hidden.push(cloneWalker.currentNode as Text);
     }
   }
+  for (const node of hidden) node.remove();
 }
 
 function renderProtectedText(container: Element, id: string, text: string): void {

@@ -4,7 +4,7 @@ import {
   clearTranslations,
   collectAdditionalTextSegments,
   collectTextSegmentsProgressive,
-  hasHiddenScanCandidates,
+  takeHiddenScanRoots,
   hideTranslations,
   invalidateStaleSegments,
   renderTranslationPlaceholders,
@@ -73,9 +73,17 @@ interface TranslationSession {
   dynamicRoots: Set<Element>;
   changedRoots: Set<Element>;
   dynamicTimer?: number;
-  /** A viewport-triggered rescan already ran for the current DOM snapshot. */
-  viewportScanSatisfied: boolean;
+  /**
+   * What the pending viewport refresh has to look at. Scrolling only revisits
+   * text that was hidden, while a layout change can move text anywhere.
+   */
+  viewportRescanScope: ViewportRescanScope;
 }
+
+type ViewportRescanScope = "hidden" | "full";
+
+/** How much of the document a refresh has to revisit. */
+type RescanScope = "none" | ViewportRescanScope;
 
 export interface PageTranslationResult {
   translated: number;
@@ -239,7 +247,7 @@ export async function startLocalPageTranslation(settings: ExtensionSettings, reu
     initializing: true,
     dynamicRoots: new Set(),
     changedRoots: new Set(),
-    viewportScanSatisfied: false
+    viewportRescanScope: "hidden"
   };
 
   activeSession = session;
@@ -282,6 +290,9 @@ export function hidePageTranslation(): void | Promise<void> {
 }
 
 export function hideLocalPageTranslation(explicitStop = true): void {
+  // An initial scan can still be yielding; without this bump it would finish and
+  // start translating again for a user who already asked to stop.
+  sessionEpoch += 1;
   invalidatePendingDocumentTranslations();
   const session = activeSession;
   if (!session && suspendedSession) {
@@ -416,7 +427,7 @@ async function runBatch(session: TranslationSession, segments: TextSegment[]): P
     } satisfies RuntimeRequest);
     if (!isActive(session)) return;
     // A response can arrive after a virtualized row has been reused.
-    refreshSegments(session, false);
+    refreshSegments(session, "none");
     const currentSegments = segments.filter((segment) => session.entries.has(segment.id));
     if (data.translations.length !== segments.length
       || data.translations.some((text) => typeof text !== "string" || !text.trim())) {
@@ -477,30 +488,30 @@ function handleImageLoad(event: Event): void {
 }
 
 function handleViewportChange(): void {
-  scheduleViewportRefresh(false);
+  scheduleViewportRefresh("hidden");
 }
 
 function handleViewportResize(): void {
-  scheduleViewportRefresh(true);
+  scheduleViewportRefresh("full");
 }
 
 /**
  * Scrolling and resizing never change the DOM, they only change what is on
  * screen. Rescanning every text node on each of those events costs a full
- * document walk plus a visibility pass, so the rescan runs once per DOM state
- * and only when the previous scan really left hidden text behind.
+ * document walk plus a visibility pass, so scrolling only revisits the subtrees
+ * that were hidden last time and a layout change takes the whole document.
  */
-function scheduleViewportRefresh(layoutChanged: boolean): void {
+function scheduleViewportRefresh(scope: ViewportRescanScope): void {
   const session = activeSession;
   if (!session) return;
-  if (layoutChanged) session.viewportScanSatisfied = false;
+  if (scope === "full") session.viewportRescanScope = "full";
   if (viewportTimer !== undefined) window.clearTimeout(viewportTimer);
   viewportTimer = window.setTimeout(() => {
     viewportTimer = undefined;
     if (activeSession !== session) return;
-    const rescan = !session.viewportScanSatisfied && hasHiddenScanCandidates();
-    refreshSegments(session, rescan);
-    if (rescan) session.viewportScanSatisfied = true;
+    const pending = session.viewportRescanScope;
+    session.viewportRescanScope = "hidden";
+    refreshSegments(session, pending);
     scheduleNearbySegments(session);
   }, VIEWPORT_DEBOUNCE_MS);
 }
@@ -549,27 +560,38 @@ function collectDynamicSegments(session: TranslationSession): void {
   if (!isActive(session)) return;
   // New markup means new text, so the next viewport event may reveal something
   // the previous scan could not see.
-  session.viewportScanSatisfied = false;
+  session.viewportRescanScope = "full";
   refreshSegments(session);
   scheduleNearbySegments(session);
 }
 
-function refreshSegments(session: TranslationSession, rescan = true): void {
+function refreshSegments(session: TranslationSession, scope: RescanScope = "full"): void {
   const staleIds = invalidateStaleSegments([...session.changedRoots]);
   session.changedRoots.clear();
+  // A stale segment left tracking, so the subtree hosting its source has to be
+  // scanned again even when the viewport only reports hidden candidates.
+  const staleRoots: Element[] = [];
   for (const id of staleIds) {
+    const entry = session.entries.get(id);
+    if (entry?.segment.element.isConnected) staleRoots.push(entry.segment.element);
+    if (!entry) continue;
     session.entries.delete(id);
     settleInitialSegment(session, id);
   }
   session.dynamicRoots.clear();
-  if (!rescan && !staleIds.length) return;
-  // Visibility and clipping can change through scrolling alone, with no DOM
-  // mutation. The caller only asks for that rescan when the previous scan left
-  // hidden text behind, so scrolling does not walk the whole document.
-  const segments = collectAdditionalTextSegments(document.body, session.settings.translateCodeComments);
-  for (const segment of segments) {
-    if (!session.entries.has(segment.id)) {
-      session.entries.set(segment.id, { segment, status: "idle" });
+  if (scope === "none" && !staleIds.length) return;
+  // Visibility and clipping change through scrolling alone, with no DOM
+  // mutation. Those rescans only revisit the subtrees that were hidden last
+  // time; the candidates that are still hidden come back for the next scroll.
+  const roots = scope === "full" ? [document.body]
+    : scope === "hidden" ? [...takeHiddenScanRoots(), ...staleRoots]
+      : [document.body];
+  for (const root of new Set(roots)) {
+    if (!root.isConnected) continue;
+    for (const segment of collectAdditionalTextSegments(root, session.settings.translateCodeComments)) {
+      if (!session.entries.has(segment.id)) {
+        session.entries.set(segment.id, { segment, status: "idle" });
+      }
     }
   }
 }

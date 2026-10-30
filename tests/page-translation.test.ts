@@ -572,6 +572,55 @@ describe("viewport page translation", () => {
     Reflect.deleteProperty(document, "elementFromPoint");
   });
 
+  it("stops an initial scan that is still yielding", async () => {
+    document.body.innerHTML = `<main>${Array.from({ length: 20 }, (_, index) =>
+      `<p data-top="${index * 30}">Paragraph ${index} to translate.</p>`).join("")}</main>`;
+    let yieldReached = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("scheduler", {
+      yield: () => {
+        yieldReached = true;
+        return gate;
+      }
+    });
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (clock += 100));
+    translateNormally();
+
+    const starting = startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(yieldReached).toBe(true);
+    hidePageTranslation();
+    release();
+    await starting;
+
+    expect(getPageTranslationState().active).toBe(false);
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps retrying hidden text until it becomes visible", async () => {
+    document.body.innerHTML = `<div role="main"><div id="scroller"><p id="visible" data-top="100">Visible email.</p>
+      <p id="covered" data-top="200">Previously covered email body.</p></div></div><div id="overlay"></div>`;
+    let covered = true;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (covered ? document.querySelector("#overlay") : document.body)
+    });
+    translateNormally();
+    await startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    covered = false;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelector("#covered .wupage-translation")?.textContent)
+      .toBe("译文：Previously covered email body."));
+  });
+
   it("keeps watching when the initial email view is empty", async () => {
     document.body.innerHTML = `<div role="main"></div>`;
     translateNormally();
