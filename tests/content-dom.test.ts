@@ -8,6 +8,7 @@ import {
   collectParagraphTextSegments,
   collectAdditionalTextSegments,
   collectTextSegments,
+  collectTextSegmentsProgressive,
   findTranslatableParagraph,
   hasPageTranslations,
   hasTranslationsIn,
@@ -17,7 +18,8 @@ import {
   renderTargetTranslation,
   renderTranslationPlaceholders,
   renderTranslations,
-  setTranslationDisplayMode
+  setTranslationDisplayMode,
+  takeHiddenScanRoots
 } from "../src/content/dom";
 import { injectContentStyles } from "../src/content/styles";
 
@@ -1798,6 +1800,65 @@ describe("content DOM translation extraction", () => {
     renderTargetTranslation(target, "覆盖实现");
     expect(target.querySelector(".wupage-translation-pending")).toBeNull();
     expect(target.querySelector(".wupage-translation")?.textContent).toBe("覆盖实现");
+  });
+
+  it("drops every hidden inline run from a grouped block", () => {
+    document.body.innerHTML = `<main><p id="prose">Visible prose <span class="hidden">HIDDEN_ONE</span> continues with <em>readable words</em><span class="hidden">HIDDEN_TWO</span> at the end.</p></main>`;
+    stubLayout("", { style: (element) => ({ display: element.closest(".hidden") ? "none" : "block" }) });
+
+    const [segment] = collectTextSegments();
+
+    expect(segment.text).toContain("Visible prose");
+    expect(segment.text).toContain("readable words");
+    expect(segment.text).toContain("at the end.");
+    expect(segment.text).not.toContain("HIDDEN_ONE");
+    expect(segment.text).not.toContain("HIDDEN_TWO");
+  });
+
+  it.each([399, 400, 401, 1000])("keeps every one of %i covered paragraphs reachable", (count) => {
+    document.body.innerHTML = `<main>${Array.from({ length: count }, (_, index) =>
+      `<p>Covered paragraph ${index}.</p>`).join("")}</main>`;
+    stubLayout();
+    const overlay = document.createElement("div");
+    document.body.append(overlay);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
+    try {
+      expect(collectAdditionalTextSegments(document.body)).toEqual([]);
+
+      const seen = new Set<Element>();
+      let rounds = 0;
+      let firstBatch = 0;
+      while (seen.size < count && rounds < count) {
+        const roots = takeHiddenScanRoots();
+        if (!roots.length) break;
+        if (!rounds) firstBatch = roots.length;
+        rounds += 1;
+        for (const root of roots) {
+          seen.add(root);
+          // The overlay still covers the text, so this rescan re-queues the root.
+          collectAdditionalTextSegments(root);
+        }
+      }
+
+      expect(firstBatch).toBe(Math.min(count, 400));
+      expect(seen.size).toBe(count);
+      expect(rounds).toBeLessThanOrEqual(Math.ceil(count / 400) + 1);
+    } finally {
+      delete (document as unknown as { elementFromPoint?: Document["elementFromPoint"] }).elementFromPoint;
+    }
+  });
+
+  it("keeps container text that a split progressive scan would skip", async () => {
+    const sections = Array.from({ length: 61 }, (_, index) =>
+      `<section><p>Readable section number ${index}.</p></section>`).join("");
+    document.body.innerHTML = `<article>Introduction before the sections.${sections}</article>`;
+    stubLayout();
+
+    const texts = (await collectTextSegmentsProgressive()).map((segment) => segment.text);
+
+    expect(texts).toContain("Introduction before the sections.");
+    expect(texts).toContain("Readable section number 60.");
+    expect(texts).toHaveLength(62);
   });
 });
 

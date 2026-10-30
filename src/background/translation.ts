@@ -23,6 +23,10 @@ const debugTasks: TranslationDebugTask[] = [];
 let nextDebugTaskId = 1;
 const MAX_DEBUG_TASKS = 100;
 const MAX_LLM_BATCH_ITEMS = 16;
+/** Bumping this invalidates every persisted translation. */
+const CACHE_KEY_VERSION = 5;
+/** Proxy fields that only affect scheduling or presentation, never the text. */
+const CACHE_KEY_IGNORED_FIELDS = ["label", "enabled", "performanceMode", "chunkSize", "concurrency"] as const;
 
 export interface TranslationTaskOptions {
   signal?: AbortSignal;
@@ -70,8 +74,10 @@ async function translateConfigured(
   const provider = createProvider(providerConfig);
   const performance = getEffectiveProviderPerformance(settings, providerId);
   // Model/prompt/source-language changes must not keep serving old translations.
+  // Scheduling and presentation fields stay out of the fingerprint: renaming a
+  // provider or tuning its concurrency must not discard the whole cache.
   const cacheProviderId = useCache
-    ? `${providerId}.${await sha256(JSON.stringify({ version: 4, provider: providerConfig, sourceLang: request.sourceLang ?? "auto",
+    ? `${providerId}.${await sha256(JSON.stringify({ version: CACHE_KEY_VERSION, provider: cacheStableProviderConfig(providerConfig), sourceLang: request.sourceLang ?? "auto",
       ...(providerConfig.type === "firefox-local" ? { models: LOCAL_MODELS.map(({ id, version }) => [id, version]) } : {}),
       ...(providerConfig.type === "doubao-web" ? { doubaoProtocolVersion: DOUBAO_PROTOCOL_VERSION, translateService: "1" } : {}),
       ...(request.preservePlaceholders ? { protectedTextVersion: 1 } : {}) }))}`
@@ -79,12 +85,16 @@ async function translateConfigured(
   const cachedTranslations = new Map<number, string>();
   const uncachedTexts: string[] = [];
   const uncachedIndexes: number[] = [];
+  // Hash every text once and read the whole batch with a single storage call;
+  // a 50-segment page used to cost 50 hashes and 50 IPC round trips here.
+  const cacheKeys = useCache
+    ? await Promise.all(request.texts.map((text) => cacheKey(cacheProviderId, request.targetLang, text, request.context)))
+    : [];
+  const storedCache = cacheKeys.length ? await readCachedTranslations(cacheKeys) : {};
 
   for (const [index, text] of request.texts.entries()) {
     signal?.throwIfAborted();
-    const stored = useCache
-      ? await readCachedTranslation(cacheProviderId, request.targetLang, text, request.context)
-      : undefined;
+    const stored = cacheKeys.length ? asCachedTranslation(storedCache[cacheKeys[index]]) : undefined;
     const cached = stored !== undefined && request.preservePlaceholders
       ? normalizeProtectedText(text, stored)
       : stored;
@@ -115,20 +125,14 @@ async function translateConfigured(
   signal?.throwIfAborted();
   for (const [index, value] of cachedTranslations) output[index] = value;
 
+  const pendingCacheWrites: Record<string, string> = {};
   for (const [translatedIndex, sourceIndex] of uncachedIndexes.entries()) {
     signal?.throwIfAborted();
     const translation = translated[translatedIndex];
     output[sourceIndex] = translation;
-    if (useCache) {
-      await writeCachedTranslation(
-        cacheProviderId,
-        request.targetLang,
-        request.texts[sourceIndex],
-        translation,
-        request.context
-      );
-    }
+    if (useCache) pendingCacheWrites[cacheKeys[sourceIndex]] = translation;
   }
+  await writeCachedTranslations(pendingCacheWrites);
 
   signal?.throwIfAborted();
   return {
@@ -457,27 +461,47 @@ function parseContextualTranslation(value: string, expectedLength: number): stri
   return translations.every((text) => text.trim()) ? translations : null;
 }
 
-async function readCachedTranslation(
-  providerId: string,
-  targetLang: string,
-  text: string,
-  context?: string
-): Promise<string | undefined> {
-  const key = await cacheKey(providerId, targetLang, text, context);
-  const result = await chrome.storage.local.get(key).catch(() => ({} as Record<string, unknown>));
-  return typeof result[key] === "string" && result[key].trim() ? result[key] : undefined;
+async function readCachedTranslations(keys: string[]): Promise<Record<string, unknown>> {
+  // One storage round trip per batch instead of one per text.
+  return chrome.storage.local.get(keys).catch(() => ({} as Record<string, unknown>));
 }
 
-async function writeCachedTranslation(
-  providerId: string,
-  targetLang: string,
-  text: string,
-  translation: string,
-  context?: string
-): Promise<void> {
-  const key = await cacheKey(providerId, targetLang, text, context);
+async function writeCachedTranslations(items: Record<string, string>): Promise<void> {
+  if (!Object.keys(items).length) return;
   // Cache quota/availability must not discard an otherwise valid translation.
-  await chrome.storage.local.set({ [key]: translation }).catch(() => undefined);
+  try {
+    await chrome.storage.local.set(items);
+  } catch {
+    // A full quota used to disable the cache silently and permanently; free the
+    // oldest half and retry once so translation memory keeps working.
+    await pruneCachedTranslations();
+    await chrome.storage.local.set(items).catch(() => undefined);
+  }
+}
+
+async function pruneCachedTranslations(): Promise<void> {
+  const keys = (await readCacheKeys()).filter((key) => key.startsWith(CACHE_PREFIX));
+  if (!keys.length) return;
+  // Persisted keys come back in insertion order, so the head holds the oldest
+  // entries; dropping half of them keeps the freshest translations.
+  await chrome.storage.local.remove(keys.slice(0, Math.ceil(keys.length / 2))).catch(() => undefined);
+}
+
+async function readCacheKeys(): Promise<string[]> {
+  const local = chrome.storage.local as typeof chrome.storage.local & { getKeys?: () => Promise<string[]> };
+  if (typeof local.getKeys === "function") return local.getKeys().catch(() => [] as string[]);
+  const items = await chrome.storage.local.get(null).catch(() => ({} as Record<string, unknown>));
+  return Object.keys(items);
+}
+
+function asCachedTranslation(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function cacheStableProviderConfig(providerConfig: ProviderConfig): Record<string, unknown> {
+  const stable: Record<string, unknown> = { ...providerConfig };
+  for (const field of CACHE_KEY_IGNORED_FIELDS) delete stable[field];
+  return stable;
 }
 
 async function cacheKey(

@@ -71,6 +71,15 @@ describe("viewport page translation", () => {
     });
   }
 
+  // The initial document scan yields to the browser, so a request is only in
+  // flight on a later task; tests that hold a response open wait here first.
+  async function waitForBatchRequests(count = 1): Promise<void> {
+    await vi.waitFor(() => {
+      const batches = vi.mocked(sendRuntimeRequest).mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH");
+      expect(batches.length).toBeGreaterThanOrEqual(count);
+    });
+  }
+
   function mountImageText(top = 100): HTMLImageElement {
     document.body.innerHTML = `<div id="intro" data-top="${top}"><picture><img></picture></div>`;
     const image = document.querySelector("img")!;
@@ -465,6 +474,7 @@ describe("viewport page translation", () => {
     let release!: (result: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const started = startPageTranslation(settings);
+    await waitForBatchRequests();
     expect(document.querySelectorAll(".wupage-translation-pending")).toHaveLength(1);
     setPageTranslationDisplayMode("replace");
     expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
@@ -515,6 +525,7 @@ describe("viewport page translation", () => {
     let release!: (response: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const completion = startPageTranslation(settings);
+    await waitForBatchRequests();
     image.alt = "新しい画像の文章だけを翻訳し、古い画像の翻訳は表示しません。".repeat(5);
     translateNormally();
     release({ translations: ["过期的图片译文"], cached: 0 });
@@ -561,6 +572,76 @@ describe("viewport page translation", () => {
     Reflect.deleteProperty(document, "elementFromPoint");
   });
 
+  it("stops an initial scan that is still yielding", async () => {
+    document.body.innerHTML = `<main>${Array.from({ length: 20 }, (_, index) =>
+      `<p data-top="${index * 30}">Paragraph ${index} to translate.</p>`).join("")}</main>`;
+    let yieldReached = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("scheduler", {
+      yield: () => {
+        yieldReached = true;
+        return gate;
+      }
+    });
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (clock += 100));
+    translateNormally();
+
+    const starting = startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(yieldReached).toBe(true);
+    hidePageTranslation();
+    release();
+    await starting;
+
+    expect(getPageTranslationState().active).toBe(false);
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps retrying hidden text until it becomes visible", async () => {
+    document.body.innerHTML = `<div role="main"><div id="scroller"><p id="visible" data-top="100">Visible email.</p>
+      <p id="covered" data-top="200">Previously covered email body.</p></div></div><div id="overlay"></div>`;
+    let covered = true;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (covered ? document.querySelector("#overlay") : document.body)
+    });
+    translateNormally();
+    await startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    covered = false;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelector("#covered .wupage-translation")?.textContent)
+      .toBe("译文：Previously covered email body."));
+  });
+
+  it("reaches covered paragraphs that overflow one rescan batch", async () => {
+    const count = 401;
+    document.body.innerHTML = `<main>${Array.from({ length: count }, (_, index) =>
+      `<p data-top="0">Covered paragraph ${index}.</p>`).join("")}</main><div id="overlay"></div>`;
+    let covered = true;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (covered ? document.querySelector("#overlay") : document.body)
+    });
+    translateNormally();
+    await startPageTranslation({ ...settings, cacheEnabled: false });
+    expect(sendRuntimeRequest).not.toHaveBeenCalled();
+
+    covered = false;
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(400), { timeout: 10000 });
+
+    window.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(count), { timeout: 10000 });
+  });
+
   it("keeps watching when the initial email view is empty", async () => {
     document.body.innerHTML = `<div role="main"></div>`;
     translateNormally();
@@ -585,6 +666,7 @@ describe("viewport page translation", () => {
     let release!: (response: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const completion = startPageTranslation(settings);
+    await waitForBatchRequests();
     document.querySelector("#body")!.firstChild!.textContent = "Updated email body.";
     translateNormally();
     release({ translations: ["过期译文"], cached: 0 });
@@ -615,6 +697,7 @@ describe("viewport page translation", () => {
       return { translations: request.texts.map((text) => `译文：${text}`), cached: 0 } as TranslateBatchResponse;
     });
     const completion = startPageTranslation({ ...settings, chunkSize: 200, concurrency: 1 });
+    await waitForBatchRequests();
     scrollOffset = 2200;
     window.dispatchEvent(new Event("scroll"));
     await new Promise((resolve) => setTimeout(resolve, 130));

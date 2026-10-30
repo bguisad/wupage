@@ -32,7 +32,10 @@ function settings(cacheEnabled = false): ExtensionSettings {
 
 function memoryStorage() {
   const values = new Map<string, unknown>();
-  const get = vi.fn(async (key: string) => ({ [key]: values.get(key) }));
+  const get = vi.fn(async (key: string | string[]) => {
+    const keys = Array.isArray(key) ? key : [key];
+    return Object.fromEntries(keys.filter((item) => values.has(item)).map((item) => [item, values.get(item)]));
+  });
   const set = vi.fn(async (entries: Record<string, unknown>) => {
     for (const [key, value] of Object.entries(entries)) values.set(key, value);
   });

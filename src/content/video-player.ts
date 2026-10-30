@@ -267,6 +267,10 @@ export class PlayerSubtitleController {
   private tick(): void {
     if (!this.enabled || this.disposed) return;
     if (!this.connected) { this.dispose(true); return; }
+    // The clock fires more than eight times a second. A paused video in a
+    // background tab cannot change anything a user could see, and the state is
+    // re-read by the next tick once the tab or the player resumes.
+    if (this.video.paused && document.visibilityState === "hidden") return;
     if (mediaKey() !== this.key) { this.changedVideo(); return; }
     this.position();
     if (this.video.seeking || Date.now() < this.suppressUntil || this.advertising()) { this.live?.reset(); this.clearCaption(); return; }
