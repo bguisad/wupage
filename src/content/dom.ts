@@ -240,6 +240,56 @@ const stableReplacementsById = new Map<string, StableReplacement>();
 const stableReplacementSources = new WeakSet<Element>();
 let targetIdCounter = 0;
 let segmentIdCounter = 0;
+/**
+ * Set when a full scan rejected text only because it was not rendered at that
+ * moment. Scrolling can reveal such text without any DOM mutation, so it is the
+ * only condition that justifies rescanning the page after a viewport change.
+ */
+let hiddenScanCandidates = false;
+
+interface DeferredBlockText {
+  block: Element;
+  /**
+   * Text nodes this block kept when it was scanned. Reading the block later must
+   * not depend on where the viewport sits at that moment, so the accepted set is
+   * frozen at scan time instead of re-testing visibility.
+   */
+  accepted: Set<Text>;
+  text?: string;
+  tokens?: ProtectedToken[];
+}
+
+/**
+ * Reading a block clones it and strips hidden text, which is the most expensive
+ * step of a scan. A long page accepts thousands of blocks but only translates
+ * the ones near the viewport, so multi-node blocks defer that work until the
+ * segment actually reaches a batch.
+ */
+const deferredBlockTexts = new Map<string, DeferredBlockText>();
+
+function resolveDeferredBlockText(id: string): string {
+  const pending = deferredBlockTexts.get(id);
+  if (!pending) return sourceTextById.get(id) ?? "";
+  if (pending.text === undefined) {
+    const { text, tokens } = getReadableBlockText(
+      pending.block,
+      createRenderVisibilitySnapshot(),
+      pending.accepted.size,
+      pending.accepted
+    );
+    pending.text = text;
+    pending.tokens = tokens;
+    if (tokens.length) protectedTokensById.set(id, tokens);
+    sourceTextById.set(id, text);
+  }
+  return pending.text ?? "";
+}
+
+/** Source text of a segment, reading a deferred block on first use. */
+function readSourceText(id: string): string {
+  if (deferredBlockTexts.has(id)) return resolveDeferredBlockText(id);
+  return sourceTextById.get(id) ?? "";
+}
 
 const PARAGRAPH_SELECTOR = [
   "p",
@@ -293,6 +343,96 @@ export function collectAdditionalTextSegments(
   translateCodeComments = true
 ): TextSegment[] {
   return collectTextSegmentsFromRoot(element, false, translateCodeComments);
+}
+
+// A whole-document scan is one long task on large pages. The initial scan runs
+// one body subtree at a time instead, handing control back to the browser
+// between slices so a click never freezes the tab for the entire scan.
+const SCAN_CHUNK_TEXT_NODES = 60;
+const SCAN_SLICE_MS = 12;
+const SCAN_CHUNK_LIMIT = 200;
+
+function yieldToMain(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (typeof scheduler?.yield === "function") return scheduler.yield();
+  return new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(0);
+  });
+}
+
+// Splits the body into subtrees small enough that scanning one stays under a
+// frame. The count runs before any visibility work, so it costs one cheap walk.
+function collectScanChunkRoots(root: Element): Element[] {
+  const roots: Element[] = [];
+  const visit = (element: Element): void => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let count = 0;
+    while (walker.nextNode()) {
+      if (!NON_BLANK_TEXT.test((walker.currentNode as Text).data)) continue;
+      count += 1;
+      if (count > SCAN_CHUNK_TEXT_NODES) break;
+    }
+    if (count <= SCAN_CHUNK_TEXT_NODES || !element.firstElementChild) {
+      roots.push(element);
+      return;
+    }
+    for (const child of Array.from(element.children)) visit(child);
+  };
+  for (const child of Array.from(root.children)) visit(child);
+  return roots;
+}
+
+/**
+ * Initial document scan that yields between slices. Semantics match
+ * collectTextSegments: same nodes, same grouping, same order.
+ */
+export async function collectTextSegmentsProgressive(
+  translateCodeComments = true
+): Promise<TextSegment[]> {
+  const body = document.body;
+  clearNodeTracking();
+  hiddenScanCandidates = false;
+  if (!body) return [];
+  // The page can change while the scan yields; remember where so the text that
+  // appeared in between is collected rather than silently dropped.
+  const touched = new Set<Element>();
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      const element = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (element && touched.size <= SCAN_CHUNK_LIMIT) touched.add(element);
+    }
+  });
+  observer.observe(body, { childList: true, characterData: true, subtree: true });
+  const segments: TextSegment[] = [];
+  let sliceStarted = performance.now();
+  try {
+    for (const chunk of collectScanChunkRoots(body)) {
+      if (!chunk.isConnected) continue;
+      segments.push(...collectTextSegmentsFromRoot(chunk, false, translateCodeComments));
+      if (performance.now() - sliceStarted < SCAN_SLICE_MS) continue;
+      await yieldToMain();
+      sliceStarted = performance.now();
+    }
+    // Text sitting directly in <body> is outside every element chunk.
+    segments.push(...collectTextSegmentsFromRoot(body, false, translateCodeComments, true));
+    for (const element of touched) {
+      if (!element.isConnected) continue;
+      segments.push(...collectTextSegmentsFromRoot(element, false, translateCodeComments));
+    }
+  } finally {
+    observer.disconnect();
+  }
+  return segments;
+}
+
+/**
+ * Reports whether the last full scan left text behind that was hidden at the
+ * time. Callers use it to skip a whole-document rescan on every scroll event.
+ */
+export function hasHiddenScanCandidates(): boolean {
+  return hiddenScanCandidates;
 }
 
 // Applications may reuse a text node or discard our rendered output. Release
@@ -589,12 +729,22 @@ export function ensureTranslationTarget(element: Element): string {
   return id;
 }
 
+const NON_BLANK_TEXT = /\S/;
+
 function collectTextSegmentsFromRoot(
   root: Element,
   resetTracking: boolean,
-  translateCodeComments: boolean
+  translateCodeComments: boolean,
+  directTextOnly = false
 ): TextSegment[] {
   if (resetTracking) clearNodeTracking();
+  // A whole-document scan starts from a clean slate; the progressive scanner
+  // already reset the flag and its per-chunk results must survive the body sweep.
+  if (!directTextOnly && (root === document.body || root === document.documentElement)) hiddenScanCandidates = false;
+  // Grouping is pure for the duration of one scan (collection never mutates the
+  // page), and the same ancestor answers for every inline child, so one lookup
+  // per element removes the repeated closest()/getComputedStyle chains.
+  groupingBlockCache = new WeakMap();
   prepareLegacyScientificParagraphs(root);
   splitAuthoredLineBreakTextNodes(root, X_POST_TEXT_SELECTOR);
   splitAuthoredLineBreakTextNodes(root, YOUTUBE_DESCRIPTION_SELECTOR, true);
@@ -602,12 +752,18 @@ function collectTextSegmentsFromRoot(
   const visibility = createRenderVisibilitySnapshot();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
-      if (alreadyTracked.has(node as Text)) return NodeFilter.FILTER_REJECT;
-      const parent = node.parentElement;
-      if (!parent || shouldSkipElement(parent, true, visibility)) return NodeFilter.FILTER_REJECT;
+      const text = node as Text;
+      // Reading data directly avoids allocating one trimmed string per node.
+      if (!NON_BLANK_TEXT.test(text.data)) return NodeFilter.FILTER_REJECT;
+      if (alreadyTracked.has(text)) return NodeFilter.FILTER_REJECT;
+      const parent = text.parentElement;
+      if (!parent || (directTextOnly && parent !== root)) return NodeFilter.FILTER_REJECT;
+      if (shouldSkipElement(parent, true, visibility)) return NodeFilter.FILTER_REJECT;
       if (isStructuredListMetadata(parent)) return NodeFilter.FILTER_REJECT;
-      if (!visibility.isTextNodeVisuallyRendered(node as Text)) return NodeFilter.FILTER_REJECT;
+      if (!visibility.isTextNodeVisuallyRendered(text)) {
+        hiddenScanCandidates = true;
+        return NodeFilter.FILTER_REJECT;
+      }
       return NodeFilter.FILTER_ACCEPT;
     }
   });
@@ -640,10 +796,15 @@ function collectTextSegmentsFromRoot(
   }
 
   const groupedSegments = groupTextSegments(textNodes, segments, visibility);
+  if (directTextOnly) return groupedSegments;
   const attributeSegments = collectAttributeSegments(root, visibility);
   const imageTextSegments = collectImageTextSegments(root, visibility);
   const collectedSegments = [...groupedSegments, ...attributeSegments, ...imageTextSegments];
-  collectedSegments.forEach((segment) => sourceTextById.set(segment.id, segment.text));
+  collectedSegments.forEach((segment) => {
+    // Deferred block text is recorded when the segment is finally requested.
+    if (deferredBlockTexts.has(segment.id)) return;
+    sourceTextById.set(segment.id, segment.text);
+  });
   return collectedSegments;
 }
 
@@ -652,8 +813,11 @@ export function renderTranslations(
   displayMode: TranslationDisplayMode = "bilingual"
 ): void {
   translations = translations.flatMap(({ id, text }) => {
+    // A caller can render a segment that never reached a batch, so the deferred
+    // block text is resolved first; it is also what registers the tokens.
+    const sourceText = readSourceText(id);
     if (!protectedTokensById.has(id)) return [{ id, text }];
-    const normalized = normalizeProtectedText(sourceTextById.get(id) ?? "", text);
+    const normalized = normalizeProtectedText(sourceText, text);
     if (normalized !== undefined) return [{ id, text: normalized }];
     // Keep the original visible if an unvalidated result reaches the renderer.
     // Formula/code identity cannot safely be reconstructed from occurrence order.
@@ -891,6 +1055,7 @@ function clearNodeTracking(): void {
   trackedGroups = [];
   trackedAttributes = [];
   trackedImageTexts = [];
+  deferredBlockTexts.clear();
   protectedTokensById = new Map();
   sourceTextById = new Map();
   renderedById.clear();
@@ -918,8 +1083,13 @@ function collectImageTextSegments(
     if (!(candidate instanceof HTMLImageElement) || trackedImages.has(candidate)) continue;
     if (isLegacyScientificEquation(candidate)
       || (candidate.closest(".MATH") && isScientificMathImage(candidate.closest(".MATH")!))) continue;
-    if (shouldSkipElement(candidate, true, visibility)
-      || !visibility.isElementVisuallyRendered(candidate)) continue;
+    if (shouldSkipElement(candidate, true, visibility)) continue;
+    if (!visibility.isElementVisuallyRendered(candidate)) {
+      // A lazy image only gains its first rendered area after it loads or
+      // scrolls into view, so the viewport change is the event worth rescanning.
+      hiddenScanCandidates = true;
+      continue;
+    }
     const sourceValue = candidate.getAttribute("alt") ?? "";
     // Promotional sites often render entire paragraphs as images and supply
     // their text in alt. Ignore short labels such as logos and image buttons.
@@ -1025,7 +1195,10 @@ function collectAttributeSegments(
   for (const candidate of candidates) {
     if (!(candidate instanceof HTMLElement) || trackedElements.has(candidate)) continue;
     if (candidate.closest(`.${TRANSLATION_CLASS}, #wupage-floating-menu, #wupage-debug-panel`)) continue;
-    if (!visibility.isElementVisuallyRendered(candidate)) continue;
+    if (!visibility.isElementVisuallyRendered(candidate)) {
+      hiddenScanCandidates = true;
+      continue;
+    }
     const sourceValue = candidate.getAttribute("placeholder") ?? "";
     const sourceText = normalizeText(sourceValue);
     if (sourceText.length < 2 || isNonTranslatableFragment(sourceText)) continue;
@@ -1136,8 +1309,8 @@ function restoreReplacedSourcesIn(root: Element): void {
 }
 
 function isSameTranslation(id: string, translation: string): boolean {
-  const sourceText = sourceTextById.get(id);
-  return sourceText !== undefined && normalizeText(sourceText) === normalizeText(translation);
+  if (!deferredBlockTexts.has(id) && !sourceTextById.has(id)) return false;
+  return normalizeText(readSourceText(id)) === normalizeText(translation);
 }
 
 function findTargetTranslations(targetId: string): Element[] {
@@ -1289,22 +1462,41 @@ function groupTextSegments(
 
     const nodeText = normalizeText(groupNodes.map((tracked) => tracked.node.textContent ?? "").join(" "));
     const id = groupNodes[0].id;
-    const { text, tokens } = getReadableBlockText(block, visibility);
+    // A block whose text lives in one node is cheap and decides its own grouping
+    // from that text, so it is read now. Multi-node blocks are the expensive ones
+    // and their text is only needed once the segment reaches a batch.
+    const singleNodeBlock = groupNodes.length < 2;
+    const readable = singleNodeBlock
+      ? getReadableBlockText(block, visibility, groupNodes.length)
+      : undefined;
     if (
-      groupNodes.length < 2 &&
-      text === nodeText &&
+      singleNodeBlock &&
+      readable!.text === nodeText &&
       !isLegacyScientificProseBlock(block) &&
       !block.matches(`summary, label, li, ${X_POST_TEXT_SELECTOR}, ${YOUTUBE_COMMENT_SELECTOR}`)
     ) continue;
-    if (!text) continue;
+    if (singleNodeBlock && !readable!.text) continue;
     const authoredLines = isAuthoredLineTextBlock(block);
     const sourceNodes = completeGroupedSourceNodes(block, groupNodes, visibility, trackedSourceNodes);
     trackedGroups.push({
       id, nodes: sourceNodes, block, mode: authoredLines ? "block" : getRenderMode(block), authoredLines,
       preserveWhitespace: block.matches(YOUTUBE_COMMENT_SELECTOR)
     });
-    if (tokens.length) protectedTokensById.set(id, tokens);
-    groupedSegments.push({ id, text, element: block });
+    if (singleNodeBlock) {
+      if (readable!.tokens.length) protectedTokensById.set(id, readable!.tokens);
+      groupedSegments.push({ id, text: readable!.text, element: block });
+    } else {
+      // Every accepted node is non-blank, so a multi-node block always resolves
+      // to a non-empty text and needs no empty-text fallback here.
+      deferredBlockTexts.set(id, { block, accepted: new Set(sourceNodes.map((tracked) => tracked.node)) });
+      groupedSegments.push({
+        id,
+        element: block,
+        get text(): string {
+          return resolveDeferredBlockText(id);
+        }
+      });
+    }
     groupNodes.forEach((tracked) => standalone.delete(tracked.id));
   }
 
@@ -1634,6 +1826,22 @@ function shouldSkipElement(
   includeNavigation = false,
   visibility?: RenderVisibilitySnapshot
 ): boolean {
+  // A scan asks this question once per text node, so sibling nodes under the
+  // same parent repeat the whole ancestor-closest chain. The answer only
+  // depends on the element and on the snapshot used to judge aria-hidden text.
+  if (!visibility || !includeNavigation) return decideSkipElement(element, includeNavigation, visibility);
+  const memoized = visibility.decisions.get(element);
+  if (memoized !== undefined) return memoized;
+  const skip = decideSkipElement(element, includeNavigation, visibility);
+  visibility.decisions.set(element, skip);
+  return skip;
+}
+
+function decideSkipElement(
+  element: Element,
+  includeNavigation: boolean,
+  visibility?: RenderVisibilitySnapshot
+): boolean {
   if (isLegacyScientificEquation(element)) return true;
   if (element.closest(`.${TRANSLATION_CLASS},kbd,samp`)) return true;
   if (element.closest(videoPlatform()?.captions ?? ".vjs-text-track-display,.plyr__captions,.jw-captions")) return true;
@@ -1709,20 +1917,63 @@ function isInlineCodeInReadableText(element: Element): boolean {
   return Boolean(code.closest("p, li, blockquote") || (div && isDivProseBlock(div)));
 }
 
+// Anything here changes what the plain text of a block means: code and math
+// become protected tokens, <br> becomes a space, and the rest are stripped from
+// the clone. A block carrying none of them can be read without cloning it.
+const PLAIN_TEXT_BLOCKER_SELECTOR = [
+  "code",
+  "kbd",
+  "samp",
+  "br",
+  ".MATH",
+  ".anchor",
+  "rustdoc-toolbar",
+  "[title*='Copy item path']",
+  "[aria-label*='Copy item path']",
+].join(",");
+
+/**
+ * True when the visible text of a block equals its raw textContent.
+ *
+ * Cloning a block is the most expensive step of a scan, and most prose blocks
+ * need none of it: no protected inline elements, no <br>, and every non-blank
+ * text node already accepted for this very block (so nothing would be stripped
+ * from the clone).
+ */
+function canReadPlainBlockText(block: Element, acceptedNodes: number): boolean {
+  if (block.querySelector(PLAIN_TEXT_BLOCKER_SELECTOR)) return false;
+  for (const link of block.querySelectorAll("a[href]")) {
+    if (isScientificCitation(link)) return false;
+  }
+  let total = 0;
+  const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    if (NON_BLANK_TEXT.test((walker.currentNode as Text).data)) total += 1;
+  }
+  return total === acceptedNodes;
+}
+
 function getReadableBlockText(
   block: Element,
-  visibility: RenderVisibilitySnapshot
+  visibility: RenderVisibilitySnapshot,
+  acceptedNodes?: number,
+  acceptedText?: Set<Text>
 ): { text: string; tokens: ProtectedToken[] } {
+  if (acceptedNodes !== undefined && canReadPlainBlockText(block, acceptedNodes)) {
+    return { text: normalizeText(block.textContent ?? ""), tokens: [] };
+  }
   const clone = block.cloneNode(true) as Element;
-  const protectedCandidates = Array.from(clone.querySelectorAll("code,kbd,samp,.MATH,a[href]")).map((node) => {
-    const element = node as Element;
-    const sourcePath = getElementPath(clone, element);
-    return {
-      element,
-      sourceElement: sourcePath ? getElementByPath(block, sourcePath) : null
-    };
-  });
-  removeUnrenderedCloneText(block, clone, visibility);
+  // A clone has the same element order as its source, so candidates pair up by
+  // index. Walking an ancestor path for every candidate was pure overhead.
+  const sourceCandidates = Array.from(block.querySelectorAll("code,kbd,samp,.MATH,a[href]"));
+  const protectedCandidates = Array.from(clone.querySelectorAll("code,kbd,samp,.MATH,a[href]")).map((
+    node,
+    index
+  ) => ({
+    element: node as Element,
+    sourceElement: sourceCandidates[index] ?? null
+  }));
+  removeUnrenderedCloneText(block, clone, visibility, acceptedText);
   clone.querySelectorAll("br").forEach((node) => {
     node.replaceWith(document.createTextNode(" "));
   });
@@ -1778,22 +2029,24 @@ function getReadableBlockText(
 function removeUnrenderedCloneText(
   source: Element,
   clone: Element,
-  visibility: RenderVisibilitySnapshot
+  visibility: RenderVisibilitySnapshot,
+  acceptedText?: Set<Text>
 ): void {
   const sourceWalker = source.ownerDocument.createTreeWalker(source, NodeFilter.SHOW_TEXT);
   const cloneWalker = clone.ownerDocument.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
-  const pairs: Array<{ source: Text; clone: Text }> = [];
+  // Walk both trees in lockstep instead of collecting every pair first.
   while (sourceWalker.nextNode() && cloneWalker.nextNode()) {
-    pairs.push({
-      source: sourceWalker.currentNode as Text,
-      clone: cloneWalker.currentNode as Text
-    });
-  }
-  for (const pair of pairs) {
+    const sourceText = sourceWalker.currentNode as Text;
+    // A deferred read replays the decision made during the scan, so a block read
+    // after the user scrolled still yields the same text.
+    const keep = acceptedText
+      ? acceptedText.has(sourceText)
+      : visibility.isTextNodeVisuallyRendered(sourceText);
     // A descendant may belong to its own label, control or paragraph. Its
     // text must never also appear in an ancestor's translation request.
-    if (!visibility.isTextNodeVisuallyRendered(pair.source)
-      || findGroupingBlock(pair.source.parentElement) !== source) pair.clone.remove();
+    if (!keep || findGroupingBlock(sourceText.parentElement) !== source) {
+      (cloneWalker.currentNode as Text).remove();
+    }
   }
 }
 
@@ -1831,28 +2084,6 @@ function getProtectedRenderElement(element: Element): Element {
   const link = element.closest("a");
   if (link && link.textContent?.trim() === element.textContent?.trim()) return link;
   return element;
-}
-
-function getElementPath(root: Element, element: Element): number[] | null {
-  const path: number[] = [];
-  let current: Element | null = element;
-  while (current && current !== root) {
-    const parent: Element | null = current.parentElement;
-    if (!parent) return null;
-    path.unshift(Array.prototype.indexOf.call(parent.children, current));
-    current = parent;
-  }
-  return current === root ? path : null;
-}
-
-function getElementByPath(root: Element, path: number[]): Element | null {
-  let current: Element = root;
-  for (const index of path) {
-    const next = current.children.item(index);
-    if (!next) return null;
-    current = next;
-  }
-  return current;
 }
 
 function escapeRegExp(value: string): string {

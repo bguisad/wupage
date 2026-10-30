@@ -71,6 +71,15 @@ describe("viewport page translation", () => {
     });
   }
 
+  // The initial document scan yields to the browser, so a request is only in
+  // flight on a later task; tests that hold a response open wait here first.
+  async function waitForBatchRequests(count = 1): Promise<void> {
+    await vi.waitFor(() => {
+      const batches = vi.mocked(sendRuntimeRequest).mock.calls.filter(([request]) => request.type === "TRANSLATE_BATCH");
+      expect(batches.length).toBeGreaterThanOrEqual(count);
+    });
+  }
+
   function mountImageText(top = 100): HTMLImageElement {
     document.body.innerHTML = `<div id="intro" data-top="${top}"><picture><img></picture></div>`;
     const image = document.querySelector("img")!;
@@ -465,6 +474,7 @@ describe("viewport page translation", () => {
     let release!: (result: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const started = startPageTranslation(settings);
+    await waitForBatchRequests();
     expect(document.querySelectorAll(".wupage-translation-pending")).toHaveLength(1);
     setPageTranslationDisplayMode("replace");
     expect(sendRuntimeRequest).toHaveBeenCalledTimes(1);
@@ -515,6 +525,7 @@ describe("viewport page translation", () => {
     let release!: (response: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const completion = startPageTranslation(settings);
+    await waitForBatchRequests();
     image.alt = "新しい画像の文章だけを翻訳し、古い画像の翻訳は表示しません。".repeat(5);
     translateNormally();
     release({ translations: ["过期的图片译文"], cached: 0 });
@@ -585,6 +596,7 @@ describe("viewport page translation", () => {
     let release!: (response: TranslateBatchResponse) => void;
     vi.mocked(sendRuntimeRequest).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const completion = startPageTranslation(settings);
+    await waitForBatchRequests();
     document.querySelector("#body")!.firstChild!.textContent = "Updated email body.";
     translateNormally();
     release({ translations: ["过期译文"], cached: 0 });
@@ -615,6 +627,7 @@ describe("viewport page translation", () => {
       return { translations: request.texts.map((text) => `译文：${text}`), cached: 0 } as TranslateBatchResponse;
     });
     const completion = startPageTranslation({ ...settings, chunkSize: 200, concurrency: 1 });
+    await waitForBatchRequests();
     scrollOffset = 2200;
     window.dispatchEvent(new Event("scroll"));
     await new Promise((resolve) => setTimeout(resolve, 130));

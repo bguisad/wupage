@@ -3,7 +3,8 @@ import {
   clearTranslationPlaceholders,
   clearTranslations,
   collectAdditionalTextSegments,
-  collectTextSegments,
+  collectTextSegmentsProgressive,
+  hasHiddenScanCandidates,
   hideTranslations,
   invalidateStaleSegments,
   renderTranslationPlaceholders,
@@ -72,6 +73,8 @@ interface TranslationSession {
   dynamicRoots: Set<Element>;
   changedRoots: Set<Element>;
   dynamicTimer?: number;
+  /** A viewport-triggered rescan already ran for the current DOM snapshot. */
+  viewportScanSatisfied: boolean;
 }
 
 export interface PageTranslationResult {
@@ -95,6 +98,12 @@ let activeSession: TranslationSession | null = null;
 let suspendedSession: TranslationSession | null = null;
 let viewportTimer: number | undefined;
 let currentDisplayMode: TranslationDisplayMode | undefined;
+// Bumped by every start and every teardown, so a scan that is still yielding
+// can tell that its result is stale before it builds a session.
+let sessionEpoch = 0;
+// True while the initial document scan is yielding between slices; the page has
+// no session yet but a translation request is already underway.
+let scanInFlight = false;
 let settingsRevision = 0;
 let latestSettings: ExtensionSettings | undefined;
 const stateListeners = new Set<(event?: "stopped") => void>();
@@ -117,13 +126,16 @@ export function getPageTranslationState(): PageTranslationState {
 
 export function getLocalPageTranslationState(): PageTranslationState {
   const session = activeSession;
-  return session
-    ? {
+  if (session) {
+    return {
       ...getResult(session),
       active: true,
       pending: [...session.entries.values()].filter((entry) => entry.status === "queued" || entry.status === "running").length
-    }
-    : { active: false, pending: 0, translated: 0, cached: 0, failed: 0, remaining: 0 };
+    };
+  }
+  // The initial scan yields to the browser, so a start request is pending work
+  // even before a session exists; reporting it as idle would flash "not started".
+  return { active: scanInFlight, pending: scanInFlight ? 1 : 0, translated: 0, cached: 0, failed: 0, remaining: 0 };
 }
 
 export function subscribePageTranslationState(listener: (event?: "stopped") => void): () => void {
@@ -165,10 +177,11 @@ export function startPageTranslation(settings: ExtensionSettings, reuseResults =
   return coordinator ? coordinator.start(settings, reuseResults) : startLocalPageTranslation(settings, reuseResults);
 }
 
-export function startLocalPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
+export async function startLocalPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
   const saved = suspendedSession;
   const canRestore = reuseResults && saved && saved.pageUrl === location.href
     && saved.translationIdentity === getTranslationIdentity(settings);
+  const epoch = ++sessionEpoch;
   let entries: Map<string, SegmentEntry>;
   if (canRestore) {
     handleDynamicContent(saved, saved.observer.takeRecords());
@@ -183,8 +196,18 @@ export function startLocalPageTranslation(settings: ExtensionSettings, reuseResu
     preserveViewportPosition(() => restoreTranslations(settings.translationDisplayMode),
       [...entries.values()].map((entry) => entry.segment));
   } else {
-    clearPageTranslation();
-    entries = new Map(collectTextSegments(settings.translateCodeComments).map((segment) => [segment.id, { segment, status: "idle" }]));
+    clearPageTranslationState();
+    // The scan yields to the browser, so a newer start or a clear can land
+    // while it runs; its collected segments are then already obsolete.
+    scanInFlight = true;
+    let scanned: TextSegment[];
+    try {
+      scanned = await collectTextSegmentsProgressive(settings.translateCodeComments);
+    } finally {
+      scanInFlight = false;
+    }
+    if (epoch !== sessionEpoch) return getLocalPageTranslationState();
+    entries = new Map(scanned.map((segment) => [segment.id, { segment, status: "idle" }]));
   }
   currentDisplayMode = settings.translationDisplayMode;
   const restored = [...entries.values()].filter((entry) => entry.status === "done").length;
@@ -215,13 +238,14 @@ export function startLocalPageTranslation(settings: ExtensionSettings, reuseResu
     viewport: new DocumentViewport(() => { if (isActive(session) && !session.initializing) scheduleNearbySegments(session); }),
     initializing: true,
     dynamicRoots: new Set(),
-    changedRoots: new Set()
+    changedRoots: new Set(),
+    viewportScanSatisfied: false
   };
 
   activeSession = session;
   observePage(session);
   window.addEventListener("scroll", handleViewportChange, { passive: true, capture: true });
-  window.addEventListener("resize", handleViewportChange, { passive: true });
+  window.addEventListener("resize", handleViewportResize, { passive: true });
   document.addEventListener("wupage:frame-visibility", handleViewportChange);
   document.addEventListener("load", handleImageLoad, true);
   const begin = () => {
@@ -238,12 +262,18 @@ export function startLocalPageTranslation(settings: ExtensionSettings, reuseResu
 }
 
 export function clearPageTranslation(): void {
+  sessionEpoch += 1;
+  clearPageTranslationState();
+  notifyTranslationState();
+}
+
+// Teardown without invalidating a scan that is already building its session.
+function clearPageTranslationState(): void {
   invalidatePendingDocumentTranslations();
   cancelActiveSession();
   suspendedSession?.observer.disconnect();
   suspendedSession = null;
   clearTranslations();
-  notifyTranslationState();
 }
 
 export function hidePageTranslation(): void | Promise<void> {
@@ -310,9 +340,11 @@ export function setLocalPageTranslationDisplayMode(mode: TranslationDisplayMode)
 function scheduleNearbySegments(session: TranslationSession, initial = false): void {
   if (!isActive(session) || session.providerPaused) return;
   if (session.initializing && !initial) return;
-  const elements = [...session.entries.values()].map(entry => entry.segment.element);
-  session.viewport.update(elements);
-  const nearby = [...session.entries.values()]
+  const entries = [...session.entries.values()];
+  // Only a deferred viewport (nested browsing context) needs the full ordered
+  // element list to look up reading neighbours, and only it observes anything.
+  if (session.viewport.deferred) session.viewport.update(entries.map(entry => entry.segment.element));
+  const nearby = entries
     .filter((entry) => entry.status === "idle" || entry.status === "queued")
     .map((entry) => ({ entry, priority: session.viewport.priority(entry.segment.element) ??
       (window === window.top || typeof IntersectionObserver === "undefined" ? getViewportPriority(entry.segment.element) : null) }))
@@ -437,14 +469,31 @@ function handleImageLoad(event: Event): void {
 }
 
 function handleViewportChange(): void {
+  scheduleViewportRefresh(false);
+}
+
+function handleViewportResize(): void {
+  scheduleViewportRefresh(true);
+}
+
+/**
+ * Scrolling and resizing never change the DOM, they only change what is on
+ * screen. Rescanning every text node on each of those events costs a full
+ * document walk plus a visibility pass, so the rescan runs once per DOM state
+ * and only when the previous scan really left hidden text behind.
+ */
+function scheduleViewportRefresh(layoutChanged: boolean): void {
+  const session = activeSession;
+  if (!session) return;
+  if (layoutChanged) session.viewportScanSatisfied = false;
   if (viewportTimer !== undefined) window.clearTimeout(viewportTimer);
   viewportTimer = window.setTimeout(() => {
     viewportTimer = undefined;
-    const session = activeSession;
-    if (session) {
-      refreshSegments(session);
-      scheduleNearbySegments(session);
-    }
+    if (activeSession !== session) return;
+    const rescan = !session.viewportScanSatisfied && hasHiddenScanCandidates();
+    refreshSegments(session, rescan);
+    if (rescan) session.viewportScanSatisfied = true;
+    scheduleNearbySegments(session);
   }, VIEWPORT_DEBOUNCE_MS);
 }
 
@@ -490,6 +539,9 @@ function handleDynamicContent(session: TranslationSession, mutations: MutationRe
 
 function collectDynamicSegments(session: TranslationSession): void {
   if (!isActive(session)) return;
+  // New markup means new text, so the next viewport event may reveal something
+  // the previous scan could not see.
+  session.viewportScanSatisfied = false;
   refreshSegments(session);
   scheduleNearbySegments(session);
 }
@@ -504,7 +556,8 @@ function refreshSegments(session: TranslationSession, rescan = true): void {
   session.dynamicRoots.clear();
   if (!rescan && !staleIds.length) return;
   // Visibility and clipping can change through scrolling alone, with no DOM
-  // mutation. Revisit previously excluded text, while skipping tracked nodes.
+  // mutation. The caller only asks for that rescan when the previous scan left
+  // hidden text behind, so scrolling does not walk the whole document.
   const segments = collectAdditionalTextSegments(document.body, session.settings.translateCodeComments);
   for (const segment of segments) {
     if (!session.entries.has(segment.id)) {
@@ -520,6 +573,8 @@ function isExtensionOwned(element: Element): boolean {
 function preserveViewportPosition(mutate: () => void, segments: TextSegment[] = []): void {
   const left = window.scrollX;
   const top = window.scrollY;
+  // An inner scroll container (mail pane, document panel) can drift even while
+  // the window itself sits at its origin, so the ancestor walk is required.
   const containers = new Map<Element, { left: number; top: number }>();
   for (const segment of segments) {
     let ancestor: Element | null = segment.element;
@@ -611,7 +666,7 @@ function cancelActiveSession(): void {
     viewportTimer = undefined;
   }
   window.removeEventListener("scroll", handleViewportChange, true);
-  window.removeEventListener("resize", handleViewportChange);
+  window.removeEventListener("resize", handleViewportResize);
   document.removeEventListener("wupage:frame-visibility", handleViewportChange);
   document.removeEventListener("load", handleImageLoad, true);
   if (!session) return;

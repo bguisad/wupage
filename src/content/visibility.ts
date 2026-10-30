@@ -10,9 +10,20 @@ interface RectLike {
   height: number;
 }
 
+interface AncestorClip {
+  x: boolean;
+  y: boolean;
+}
+
 export interface RenderVisibilitySnapshot {
   isTextNodeVisuallyRendered(node: Text): boolean;
   isElementVisuallyRendered(element: Element): boolean;
+  /**
+   * Per-snapshot memo for caller-side element decisions such as skip selectors.
+   * A snapshot describes one point in time, so anything derived from it stays
+   * valid for the snapshot's lifetime and is dropped together with it.
+   */
+  readonly decisions: WeakMap<Element, boolean>;
 }
 
 /**
@@ -34,6 +45,8 @@ export function createRenderVisibilitySnapshot(): RenderVisibilitySnapshot {
   const renderedElements = new WeakMap<Element, boolean>();
   const elementRects = new WeakMap<Element, RectLike[]>();
   const textRects = new WeakMap<Text, RectLike[]>();
+  const ancestorClips = new WeakMap<Element, AncestorClip>();
+  const decisions = new WeakMap<Element, boolean>();
 
   const isRendered = (element: Element): boolean => {
     const cached = renderedElements.get(element);
@@ -59,10 +72,24 @@ export function createRenderVisibilitySnapshot(): RenderVisibilitySnapshot {
     return rects;
   };
 
+  // getComputedStyle is the most expensive call in a full-page scan, and every
+  // text node under the same container re-reads the same ancestors.
+  const readAncestorClip = (element: Element): AncestorClip => {
+    const cached = ancestorClips.get(element);
+    if (cached) return cached;
+    const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+    const clip: AncestorClip = style
+      ? { x: clipsOverflow(style.overflowX || style.overflow), y: clipsOverflow(style.overflowY || style.overflow) }
+      : { x: false, y: false };
+    ancestorClips.set(element, clip);
+    return clip;
+  };
+
   const isRectVisible = (rect: RectLike, host: Element): boolean =>
-    isRenderedRectVisible(rect, host, readElementRects);
+    isRenderedRectVisible(rect, host, readElementRects, readAncestorClip);
 
   return {
+    decisions,
     isTextNodeVisuallyRendered(node: Text): boolean {
       const host = node.parentElement;
       return Boolean(
@@ -135,9 +162,10 @@ function getElementRects(element: Element): RectLike[] {
 function isRenderedRectVisible(
   rect: RectLike,
   host: Element,
-  readElementRects: (element: Element) => RectLike[]
+  readElementRects: (element: Element) => RectLike[],
+  readAncestorClip: (element: Element) => AncestorClip
 ): boolean {
-  const clipped = clipToHiddenAncestors(rect, host, readElementRects);
+  const clipped = clipToHiddenAncestors(rect, host, readElementRects, readAncestorClip);
   if (!clipped || !hasRenderedArea(clipped)) return false;
 
   const view = host.ownerDocument.defaultView;
@@ -155,17 +183,17 @@ function isRenderedRectVisible(
 function clipToHiddenAncestors(
   rect: RectLike,
   host: Element,
-  readElementRects: (element: Element) => RectLike[]
+  readElementRects: (element: Element) => RectLike[],
+  readAncestorClip: (element: Element) => AncestorClip
 ): RectLike | null {
-  const view = host.ownerDocument.defaultView;
-  if (!view) return null;
+  if (!host.ownerDocument.defaultView) return null;
   let visibleRect: RectLike | null = rect;
   let ancestor: Element | null = host;
 
   while (ancestor && visibleRect) {
-    const style = view.getComputedStyle(ancestor);
-    const clipsX = clipsOverflow(style.overflowX || style.overflow);
-    const clipsY = clipsOverflow(style.overflowY || style.overflow);
+    const clip = readAncestorClip(ancestor);
+    const clipsX = clip.x;
+    const clipsY = clip.y;
     if (clipsX || clipsY) {
       const bounds = readElementRects(ancestor)[0] ?? ancestor.getBoundingClientRect();
       visibleRect = intersectOnAxes(visibleRect, bounds, clipsX, clipsY);
