@@ -5,14 +5,29 @@ const sourceRuns = new Set<HTMLElement>();
 const INLINE = /^(?:A|SPAN|B|BIG|SMALL|I|EM|STRONG|U|S|SUB|SUP|FONT|TT|CODE|NOBR|BR)$/u;
 const BLOCKS = 'div,p,h1,h2,h3,h4,h5,h6,li,table,ul,ol,blockquote,section,article,header,footer,aside,nav,button,input,textarea,select,[contenteditable]';
 
+// Grouping and skip decisions ask this question once per candidate element, so a
+// document-wide `meta` query here dominated scans on ordinary pages. The answer
+// cannot change while one scan runs — collection never mutates the page — and
+// every scan starts by preparing these paragraphs, which drops the memo again.
+const scientificDocuments = new WeakMap<Document, boolean>();
+
+export function resetLegacyScientificDocumentCache(doc: Document = document): void {
+  scientificDocuments.delete(doc);
+}
+
 export function isLegacyScientificDocument(doc: Document): boolean {
-  return [...doc.querySelectorAll('meta[name]')].some(meta =>
+  const cached = scientificDocuments.get(doc);
+  if (cached !== undefined) return cached;
+  const value = [...doc.querySelectorAll('meta[name]')].some(meta =>
     meta.getAttribute('name')?.toLowerCase() === 'generator'
     && /^LaTeX2HTML\b/iu.test(meta.getAttribute('content') ?? ''));
+  scientificDocuments.set(doc, value);
+  return value;
 }
 
 export function prepareLegacyScientificParagraphs(root: Element): void {
   const doc = root.ownerDocument;
+  resetLegacyScientificDocumentCache(doc);
   if (!isLegacyScientificDocument(doc) || !doc.body) return;
   // Incremental scans may start at a new inline child rather than at BODY.
   if (root !== doc.body && root.parentElement !== doc.body) return;

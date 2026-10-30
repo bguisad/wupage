@@ -1681,8 +1681,17 @@ function getXPostParagraphGroups(
   return paragraphs;
 }
 
+let groupingBlockCache = new WeakMap<Element, Element | null>();
+
 function findGroupingBlock(element: Element | null): Element | null {
   if (!element) return null;
+  if (groupingBlockCache.has(element)) return groupingBlockCache.get(element) ?? null;
+  const block = computeGroupingBlock(element);
+  groupingBlockCache.set(element, block);
+  return block;
+}
+
+function computeGroupingBlock(element: Element): Element | null {
   const description = element.closest(YOUTUBE_DESCRIPTION_SELECTOR);
   if (description) return element.closest("a") ? null : description;
   const comment = element.closest(YOUTUBE_COMMENT_SELECTOR);
