@@ -240,6 +240,7 @@ const stableReplacementsById = new Map<string, StableReplacement>();
 const stableReplacementSources = new WeakSet<Element>();
 let targetIdCounter = 0;
 let segmentIdCounter = 0;
+let nodeTrackingEpoch = 0;
 /**
  * The elements that held text a full scan rejected only because it was not
  * rendered at that moment. Scrolling can reveal such text without any DOM
@@ -268,17 +269,9 @@ let hiddenScanOverflowRoot: Element | null = null;
 let hiddenScanRootsBeforeOverflow = 0;
 
 function noteHiddenScanCandidate(element: Element | null): void {
-  if (!element) return;
-  if (hiddenScanRoots.size >= HIDDEN_SCAN_ROOT_BUDGET) {
-    // Detached subtrees would otherwise hold the budget down for the rest of
-    // the session; pruning costs nothing while the queue is below the limit.
-    for (const candidate of hiddenScanRoots) {
-      if (!candidate.isConnected) {
-        hiddenScanRoots.delete(candidate);
-        hiddenScanRootsBeforeOverflow = Math.max(0, hiddenScanRootsBeforeOverflow - 1);
-      }
-    }
-  }
+  if (!element || hiddenScanRoots.has(element) || hiddenScanOverflowRoot?.contains(element)) return;
+  // Disconnected candidates are removed when taking a snapshot. Walking the
+  // entire queue for every overflowing text node makes collection quadratic.
   if (hiddenScanRoots.size < HIDDEN_SCAN_ROOT_BUDGET) {
     hiddenScanRoots.add(element);
     return;
@@ -400,102 +393,157 @@ export function collectAdditionalTextSegments(
   return collectTextSegmentsFromRoot(element, false, translateCodeComments);
 }
 
-// A whole-document scan is one long task on large pages. The initial scan runs
-// one body subtree at a time instead, handing control back to the browser
-// between slices so a click never freezes the tab for the entire scan.
-const SCAN_CHUNK_TEXT_NODES = 60;
+const SCAN_CHUNK_NODES = 120;
 const SCAN_SLICE_MS = 12;
-const SCAN_CHUNK_LIMIT = 200;
+const SCAN_MUTATION_ROOT_LIMIT = 200;
 
-function yieldToMain(): Promise<void> {
-  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
-  if (typeof scheduler?.yield === "function") return scheduler.yield();
+export interface ProgressiveScanOptions {
+  signal?: AbortSignal;
+  onSegments?: (segments: TextSegment[]) => void;
+  onPendingRoots?: (roots: Element[]) => void;
+  observeChanges?: boolean;
+}
+
+function yieldToMain(signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => resolve();
-    channel.port2.postMessage(0);
+    let channel: MessageChannel | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      signal?.removeEventListener("abort", finish);
+      channel?.port1.close();
+      channel?.port2.close();
+      clearTimeout(timer);
+      resolve();
+    };
+    if (signal?.aborted) { finish(); return; }
+    signal?.addEventListener("abort", finish, { once: true });
+    const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+    if (typeof scheduler?.yield === "function") {
+      scheduler.yield().then(finish, finish);
+    } else if (typeof MessageChannel !== "undefined") {
+      channel = new MessageChannel();
+      channel.port1.onmessage = finish;
+      channel.port2.postMessage(0);
+    } else timer = setTimeout(finish, 0);
   });
 }
 
 interface ScanChunk {
   root: Element;
-  /** Collect only the text whose parent is exactly this element. */
   directTextOnly: boolean;
 }
 
-// Splits the body into subtrees small enough that scanning one stays under a
-// frame. The count runs before any visibility work, so it costs one cheap walk.
-function collectScanChunkRoots(root: Element): ScanChunk[] {
-  const chunks: ScanChunk[] = [];
-  const hasDirectText = (element: Element): boolean => {
-    for (let node = element.firstChild; node; node = node.nextSibling) {
-      if (node.nodeType === Node.TEXT_NODE && NON_BLANK_TEXT.test((node as Text).data)) return true;
-    }
-    return false;
-  };
-  const visit = (element: Element): void => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+// Discover chunks lazily so planning a large document also yields. Keep authored
+// paragraphs intact: splitting inline runs changes grouping and line breaks.
+function* collectScanChunks(root: Element): Generator<ScanChunk> {
+  const stack = [root];
+  while (stack.length) {
+    const element = stack.pop()!;
+    if (!element.isConnected) continue;
+    const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
     let count = 0;
-    while (walker.nextNode()) {
-      if (!NON_BLANK_TEXT.test((walker.currentNode as Text).data)) continue;
-      count += 1;
-      if (count > SCAN_CHUNK_TEXT_NODES) break;
+    while (count <= SCAN_CHUNK_NODES && walker.nextNode()) count += 1;
+    if (count <= SCAN_CHUNK_NODES || !element.firstElementChild
+      || element.matches(PARAGRAPH_SELECTOR + ",[data-wupage-scientific-source]")) {
+      yield { root: element, directTextOnly: false };
+      continue;
     }
-    if (count <= SCAN_CHUNK_TEXT_NODES || !element.firstElementChild) {
-      chunks.push({ root: element, directTextOnly: false });
-      return;
-    }
-    // Descending past a container leaves its own text inside no child chunk, so
-    // that text is collected as a slice of its own before recursing.
-    if (hasDirectText(element)) chunks.push({ root: element, directTextOnly: true });
-    for (const child of Array.from(element.children)) visit(child);
-  };
-  for (const child of Array.from(root.children)) visit(child);
-  return chunks;
+    yield { root: element, directTextOnly: true };
+    for (let child = element.lastElementChild; child; child = child.previousElementSibling) stack.push(child);
+  }
 }
 
-/**
- * Initial document scan that yields between slices. Semantics match
- * collectTextSegments: same nodes, same grouping, same order.
- */
+function addCoveredScanRoot(roots: Set<Element>, element: Element): void {
+  for (const root of roots) {
+    if (root.contains(element)) return;
+    if (element.contains(root)) roots.delete(root);
+  }
+  roots.add(element);
+}
+
 export async function collectTextSegmentsProgressive(
-  translateCodeComments = true
+  translateCodeComments = true,
+  options: ProgressiveScanOptions = {}
 ): Promise<TextSegment[]> {
-  const body = document.body;
+  if (options.signal?.aborted) return [];
   clearNodeTracking();
-  if (!body) return [];
-  // The page can change while the scan yields; remember where so the text that
-  // appeared in between is collected rather than silently dropped.
+  if (!document.body) return [];
+  prepareLegacyScientificParagraphs(document.body);
+  return scanTextRootsProgressive([document.body], translateCodeComments, options, true);
+}
+
+/** Incremental scans retain existing translations and use the same time budget. */
+export function collectAdditionalTextSegmentsProgressive(
+  roots: Element[], translateCodeComments = true, options: ProgressiveScanOptions = {}
+): Promise<TextSegment[]> {
+  return scanTextRootsProgressive(roots, translateCodeComments, options, options.observeChanges ?? true);
+}
+
+async function scanTextRootsProgressive(
+  roots: Element[], translateCodeComments: boolean, options: ProgressiveScanOptions, observeChanges: boolean
+): Promise<TextSegment[]> {
+  const epoch = nodeTrackingEpoch;
+  const cancelled = () => options.signal?.aborted || epoch !== nodeTrackingEpoch;
+  if (cancelled()) return [];
+  const segments = new Map<string, TextSegment>();
   const touched = new Set<Element>();
-  const observer = new MutationObserver((records) => {
+  const recordMutations = (records: MutationRecord[]) => {
     for (const record of records) {
       const element = record.target instanceof Element ? record.target : record.target.parentElement;
-      if (element && touched.size <= SCAN_CHUNK_LIMIT) touched.add(element);
+      if (!element?.isConnected) continue;
+      addCoveredScanRoot(touched, element);
+      if (touched.size > SCAN_MUTATION_ROOT_LIMIT) { touched.clear(); touched.add(document.body); }
     }
-  });
-  observer.observe(body, { childList: true, characterData: true, subtree: true });
-  const segments: TextSegment[] = [];
+  };
+  const observer = observeChanges ? new MutationObserver(recordMutations) : undefined;
+  observer?.observe(document.body, { childList: true, characterData: true, subtree: true, attributes: true,
+    attributeFilter: ["class", "style", "hidden", "aria-hidden", "placeholder", "alt", "open"] });
   let sliceStarted = performance.now();
+  const scan = async (pending: Element[]) => {
+    const candidates = new Set(pending.filter(root => root.isConnected));
+    const covered = [...candidates].filter(root => {
+      for (let ancestor = root.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (candidates.has(ancestor)) return false;
+      }
+      return true;
+    });
+    for (const root of covered) {
+      if (root === document.body || root === document.documentElement) clearHiddenScanCandidates();
+      for (const chunk of collectScanChunks(root)) {
+        if (cancelled()) return;
+        recordMutations(observer?.takeRecords() ?? []);
+        const found = collectTextSegmentsFromRoot(chunk.root, false, translateCodeComments, chunk.directTextOnly);
+        // Text normalization performed by the collector is already represented in
+        // found; do not mistake its own node splits for host changes.
+        observer?.takeRecords();
+        for (const segment of found) segments.set(segment.id, segment);
+        options.onSegments?.(found);
+        if (performance.now() - sliceStarted < SCAN_SLICE_MS) continue;
+        await yieldToMain(options.signal);
+        if (cancelled()) return;
+        sliceStarted = performance.now();
+      }
+    }
+  };
   try {
-    for (const chunk of collectScanChunkRoots(body)) {
-      if (!chunk.root.isConnected) continue;
-      segments.push(...collectTextSegmentsFromRoot(
-        chunk.root, false, translateCodeComments, chunk.directTextOnly
-      ));
-      if (performance.now() - sliceStarted < SCAN_SLICE_MS) continue;
-      await yieldToMain();
-      sliceStarted = performance.now();
+    await scan(roots);
+    // Reconcile bursts without letting a continuously updating page keep the
+    // initial scan open forever. The page session takes over any remaining work.
+    for (let pass = 0; pass < 2 && !cancelled(); pass++) {
+      recordMutations(observer?.takeRecords() ?? []);
+      if (!touched.size) break;
+      const changed = [...touched]; touched.clear();
+      for (const id of invalidateStaleSegments(changed)) segments.delete(id);
+      await scan(changed);
     }
-    // Text sitting directly in <body> is outside every element chunk.
-    segments.push(...collectTextSegmentsFromRoot(body, false, translateCodeComments, true));
-    for (const element of touched) {
-      if (!element.isConnected) continue;
-      segments.push(...collectTextSegmentsFromRoot(element, false, translateCodeComments));
+    if (cancelled()) return [];
+    recordMutations(observer?.takeRecords() ?? []);
+    if (touched.size) {
+      for (const id of invalidateStaleSegments([...touched])) segments.delete(id);
+      options.onPendingRoots?.([...touched]);
     }
-  } finally {
-    observer.disconnect();
-  }
-  return segments;
+    return [...segments.values()];
+  } finally { observer?.disconnect(); }
 }
 
 /**
@@ -592,6 +640,7 @@ export function invalidateStaleSegments(changedRoots: Element[] = []): string[] 
     }
     protectedTokensById.delete(id);
     sourceTextById.delete(id);
+    deferredBlockTexts.delete(id);
     translatedTextById.delete(id);
   }
   trackedNodes = trackedNodes.filter((node) => !stale.has(node.id));
@@ -838,33 +887,38 @@ function collectTextSegmentsFromRoot(
   // page), and the same ancestor answers for every inline child, so one lookup
   // per element removes the repeated closest()/getComputedStyle chains.
   groupingBlockCache = new WeakMap();
-  prepareLegacyScientificParagraphs(root);
-  splitAuthoredLineBreakTextNodes(root, X_POST_TEXT_SELECTOR);
-  splitAuthoredLineBreakTextNodes(root, YOUTUBE_DESCRIPTION_SELECTOR, true);
+  if (!directTextOnly) {
+    prepareLegacyScientificParagraphs(root);
+    splitAuthoredLineBreakTextNodes(root, X_POST_TEXT_SELECTOR);
+    splitAuthoredLineBreakTextNodes(root, YOUTUBE_DESCRIPTION_SELECTOR, true);
+  }
   const alreadyTracked = new Set(trackedNodes.map((tracked) => tracked.node));
   const visibility = createRenderVisibilitySnapshot();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const text = node as Text;
-      // Reading data directly avoids allocating one trimmed string per node.
-      if (!NON_BLANK_TEXT.test(text.data)) return NodeFilter.FILTER_REJECT;
-      if (alreadyTracked.has(text)) return NodeFilter.FILTER_REJECT;
-      const parent = text.parentElement;
-      if (!parent || (directTextOnly && parent !== root)) return NodeFilter.FILTER_REJECT;
-      if (shouldSkipElement(parent, true, visibility)) return NodeFilter.FILTER_REJECT;
-      if (isStructuredListMetadata(parent)) return NodeFilter.FILTER_REJECT;
-      if (!visibility.isTextNodeVisuallyRendered(text)) {
-        noteHiddenScanCandidate(parent);
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
+  const acceptsText = (text: Text): boolean => {
+    if (!NON_BLANK_TEXT.test(text.data) || alreadyTracked.has(text)) return false;
+    const parent = text.parentElement;
+    if (!parent || shouldSkipElement(parent, true, visibility) || isStructuredListMetadata(parent)) return false;
+    if (!visibility.isTextNodeVisuallyRendered(text)) {
+      noteHiddenScanCandidate(parent);
+      return false;
     }
-  });
+    return true;
+  };
+  const candidates: Text[] = [];
+  if (directTextOnly) {
+    for (let node = root.firstChild; node; node = node.nextSibling) {
+      if (node instanceof Text && acceptsText(node)) candidates.push(node);
+    }
+  } else {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => acceptsText(node as Text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+    });
+    while (walker.nextNode()) candidates.push(walker.currentNode as Text);
+  }
 
   const segments: TextSegment[] = [];
   const textNodes: TrackedNode[] = [];
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
+  for (const node of candidates) {
     const codeComment = translateCodeComments ? getCodeComment(node) : null;
     if (isInsideCodeBlock(node.parentElement) && !codeComment) continue;
     const text = normalizeText(node.textContent ?? "");
@@ -889,9 +943,8 @@ function collectTextSegmentsFromRoot(
   }
 
   const groupedSegments = groupTextSegments(textNodes, segments, visibility);
-  if (directTextOnly) return groupedSegments;
-  const attributeSegments = collectAttributeSegments(root, visibility);
-  const imageTextSegments = collectImageTextSegments(root, visibility);
+  const attributeSegments = directTextOnly ? [] : collectAttributeSegments(root, visibility);
+  const imageTextSegments = directTextOnly ? [] : collectImageTextSegments(root, visibility);
   const collectedSegments = [...groupedSegments, ...attributeSegments, ...imageTextSegments];
   collectedSegments.forEach((segment) => {
     // Deferred block text is recorded when the segment is finally requested.
@@ -1142,6 +1195,7 @@ export function restoreTranslations(displayMode: TranslationDisplayMode): void {
 }
 
 function clearNodeTracking(): void {
+  nodeTrackingEpoch += 1;
   for (const id of stableReplacementsById.keys()) restoreStableReplacement(id);
   clearLegacyScientificParagraphs();
   trackedNodes = [];
@@ -1158,8 +1212,8 @@ function clearNodeTracking(): void {
 
 function pruneTranslationResults(): void {
   const ids = new Set([...trackedNodes, ...trackedGroups, ...trackedAttributes, ...trackedImageTexts].map((entry) => entry.id));
-  for (const id of translatedTextById.keys()) {
-    if (!ids.has(id)) translatedTextById.delete(id);
+  for (const map of [translatedTextById, sourceTextById, protectedTokensById, deferredBlockTexts]) {
+    for (const id of map.keys()) if (!ids.has(id)) map.delete(id);
   }
 }
 
@@ -1457,7 +1511,13 @@ function applyTranslationTextColor(
       ["font-size", displayMode === "replace" ? "inherit" : "0.92em"], ["line-height", "inherit"]
     ]) translation.style.setProperty(name, value, "important");
   }
-  const color = window.getComputedStyle(source).color;
+  const sourceStyle = window.getComputedStyle(source);
+  if (sourceStyle.whiteSpace === "nowrap" && translation.dataset.wupageMode !== "code-comment"
+    && translation.dataset.wupagePreserveWhitespace !== "true"
+    && !isCompactNavigationText(source) && !isCompactControlText(source)) {
+    translation.style.setProperty("white-space", "normal");
+  }
+  const color = sourceStyle.color;
   if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") return;
   if (displayMode !== "bilingual-accent") {
     setTranslationTextColor(translation, color);

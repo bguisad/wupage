@@ -311,3 +311,9 @@ OpenCV 4.10 的构建文件还会移除旧 Emscripten 的 demangler 选项及文
 安装可选的 Playwright 与 Chromium 后运行 `npm run test:github-code`。测试使用本地代码视图样本，不访问 GitHub 或翻译服务，覆盖普通行、固定位置行和旧版表格，以及两种窗口宽度、三种显示模式、加载占位、长译文横向滚动和清除还原。所有阶段都要求代码行位置与行号保持对齐，译文字形不能跨入下一行。
 
 可通过 `PLAYWRIGHT_MODULE` 指定外部 Playwright 的 `index.mjs`，通过 `PDF_TEST_BROWSER` 指定现有 Chromium 或 Edge 的可执行文件；测试报告保存在被 Git 忽略的 `.npm-cache/github-code-comments/`。
+
+### 页面扫描与取消回归
+
+`tests/page-scan.test.ts` 覆盖扫描期间停止、连续启动、语言与显示模式切换、可见性变化、超过 200 个容器的 DOM 修改，以及保留已有译文的分片补扫。`tests/content-dom.test.ts` 另覆盖隐藏候选的数量边界和溢出轮转。
+
+构建后运行 `npm run test:page-scan`、`npm run test:page-scan:edge` 或 `npm run test:page-scan:firefox`。脚本使用独立浏览器配置和本地模拟服务，检查 400 / 800 节文档、滚动补译、4096 个隐藏容器加合并溢出根、隐藏内容不进入请求，以及扫描期间停止后不恢复译文。Chromium 浏览器先用 80 ms 人工任务验证观测器，再记录各场景中至少 50 ms 的主线程任务，并以 500 ms 检查同步扫描回退；Firefox 不支持该观测接口时只执行功能断言。报告保存在 `.npm-cache/page-scan-<浏览器>/report.json`。支持 `PLAYWRIGHT_MODULE`、`CHROME_TEST_BROWSER`、`EDGE_TEST_BROWSER` 和 `FIREFOX_BINARY`。

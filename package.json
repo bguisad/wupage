@@ -74,7 +74,10 @@
     "test:pdf-scope": "node scripts/test-pdf-scope.mjs",
     "test:github-code": "node scripts/test-github-code-comments.mjs",
     "test:image-resolution": "node scripts/test-image-resolution.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:page-scan": "node scripts/test-page-scan.mjs",
+    "test:page-scan:edge": "node scripts/test-page-scan.mjs --edge",
+    "test:page-scan:firefox": "node scripts/test-page-scan.mjs --firefox"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.34",

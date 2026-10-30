@@ -2,7 +2,7 @@ import type { ExtensionSettings, RuntimeRequest, TranslateBatchResponse, Transla
 import {
   clearTranslationPlaceholders,
   clearTranslations,
-  collectAdditionalTextSegments,
+  collectAdditionalTextSegmentsProgressive,
   collectTextSegmentsProgressive,
   takeHiddenScanRoots,
   hideTranslations,
@@ -78,12 +78,15 @@ interface TranslationSession {
    * text that was hidden, while a layout change can move text anywhere.
    */
   viewportRescanScope: ViewportRescanScope;
+  scanController: AbortController;
+  refreshRoots: Set<Element>;
+  refreshTask?: Promise<void>;
 }
 
 type ViewportRescanScope = "hidden" | "full";
 
 /** How much of the document a refresh has to revisit. */
-type RescanScope = "none" | ViewportRescanScope;
+type RescanScope = "none" | "changed" | ViewportRescanScope;
 
 export interface PageTranslationResult {
   translated: number;
@@ -109,9 +112,12 @@ let currentDisplayMode: TranslationDisplayMode | undefined;
 // Bumped by every start and every teardown, so a scan that is still yielding
 // can tell that its result is stale before it builds a session.
 let sessionEpoch = 0;
-// True while the initial document scan is yielding between slices; the page has
-// no session yet but a translation request is already underway.
-let scanInFlight = false;
+let pendingScan: { controller: AbortController; settings: ExtensionSettings } | null = null;
+
+function cancelPendingScan(): void {
+  pendingScan?.controller.abort();
+  pendingScan = null;
+}
 let settingsRevision = 0;
 let latestSettings: ExtensionSettings | undefined;
 const stateListeners = new Set<(event?: "stopped") => void>();
@@ -143,7 +149,7 @@ export function getLocalPageTranslationState(): PageTranslationState {
   }
   // The initial scan yields to the browser, so a start request is pending work
   // even before a session exists; reporting it as idle would flash "not started".
-  return { active: scanInFlight, pending: scanInFlight ? 1 : 0, translated: 0, cached: 0, failed: 0, remaining: 0 };
+  return { active: Boolean(pendingScan), pending: pendingScan ? 1 : 0, translated: 0, cached: 0, failed: 0, remaining: 0 };
 }
 
 export function subscribePageTranslationState(listener: (event?: "stopped") => void): () => void {
@@ -167,6 +173,11 @@ export function updatePageTranslationSettings(settings: ExtensionSettings): void
   settingsRevision += 1;
   latestSettings = settings;
   if (coordinator) return;
+  if (pendingScan) {
+    if (getTranslationIdentity(pendingScan.settings) !== getTranslationIdentity(settings)) {
+      void startPageTranslation(settings, false);
+    } else pendingScan.settings = settings;
+  }
   const session = activeSession;
   if (session && (session.settings.sourceLang !== settings.sourceLang || session.settings.targetLang !== settings.targetLang)) {
     // Start from the saved originals, cancelling the old generation before any
@@ -186,11 +197,12 @@ export function startPageTranslation(settings: ExtensionSettings, reuseResults =
 }
 
 export async function startLocalPageTranslation(settings: ExtensionSettings, reuseResults = true): Promise<PageTranslationResult> {
+  cancelPendingScan();
   const saved = suspendedSession;
   const canRestore = reuseResults && saved && saved.pageUrl === location.href
     && saved.translationIdentity === getTranslationIdentity(settings);
   const epoch = ++sessionEpoch;
-  let entries: Map<string, SegmentEntry>;
+  let entries = new Map<string, SegmentEntry>();
   if (canRestore) {
     handleDynamicContent(saved, saved.observer.takeRecords());
     saved.observer.disconnect();
@@ -198,24 +210,24 @@ export async function startLocalPageTranslation(settings: ExtensionSettings, reu
     const stale = new Set(invalidateStaleSegments([...saved.changedRoots]));
     entries = new Map([...saved.entries].filter(([id, entry]) => !stale.has(id) && entry.segment.element.isConnected)
       .map(([id, entry]) => [id, { segment: entry.segment, status: entry.status === "done" ? "done" : "idle" }]));
-    for (const segment of collectAdditionalTextSegments(document.body, settings.translateCodeComments)) {
-      entries.set(segment.id, { segment, status: "idle" });
-    }
-    preserveViewportPosition(() => restoreTranslations(settings.translationDisplayMode),
-      [...entries.values()].map((entry) => entry.segment));
-  } else {
-    clearPageTranslationState();
-    // The scan yields to the browser, so a newer start or a clear can land
-    // while it runs; its collected segments are then already obsolete.
-    scanInFlight = true;
-    let scanned: TextSegment[];
-    try {
-      scanned = await collectTextSegmentsProgressive(settings.translateCodeComments);
-    } finally {
-      scanInFlight = false;
-    }
-    if (epoch !== sessionEpoch) return getLocalPageTranslationState();
-    entries = new Map(scanned.map((segment) => [segment.id, { segment, status: "idle" }]));
+  } else clearPageTranslationState();
+  const pending = { controller: new AbortController(), settings };
+  pendingScan = pending;
+  const pendingRoots = new Set<Element>();
+  notifyTranslationState();
+  try {
+    const options = { signal: pending.controller.signal,
+      onPendingRoots: (roots: Element[]) => roots.forEach(root => pendingRoots.add(root)) };
+    const scanned = canRestore
+      ? await collectAdditionalTextSegmentsProgressive([document.body], settings.translateCodeComments, options)
+      : await collectTextSegmentsProgressive(settings.translateCodeComments, options);
+    if (epoch !== sessionEpoch || pending.controller.signal.aborted) return { ...getLocalPageTranslationState(), cancelled: true };
+    settings = pending.settings;
+    for (const segment of scanned) entries.set(segment.id, { segment, status: "idle" });
+    if (canRestore) preserveViewportPosition(() => restoreTranslations(settings.translationDisplayMode),
+      [...entries.values()].map(entry => entry.segment));
+  } finally {
+    if (pendingScan === pending) pendingScan = null;
   }
   currentDisplayMode = settings.translationDisplayMode;
   const restored = [...entries.values()].filter((entry) => entry.status === "done").length;
@@ -247,7 +259,9 @@ export async function startLocalPageTranslation(settings: ExtensionSettings, reu
     initializing: true,
     dynamicRoots: new Set(),
     changedRoots: new Set(),
-    viewportRescanScope: "hidden"
+    viewportRescanScope: "hidden",
+    scanController: new AbortController(),
+    refreshRoots: new Set()
   };
 
   activeSession = session;
@@ -259,6 +273,8 @@ export async function startLocalPageTranslation(settings: ExtensionSettings, reu
   const begin = () => {
     if (!isActive(session)) return;
     session.initializing = false;
+    for (const root of pendingRoots) session.dynamicRoots.add(root);
+    if (pendingRoots.size) refreshSegments(session, "changed");
     scheduleNearbySegments(session, true);
     resolveInitialIfReady(session);
   };
@@ -277,6 +293,7 @@ export function clearPageTranslation(): void {
 
 // Teardown without invalidating a scan that is already building its session.
 function clearPageTranslationState(): void {
+  cancelPendingScan();
   invalidatePendingDocumentTranslations();
   cancelActiveSession();
   suspendedSession?.observer.disconnect();
@@ -293,6 +310,9 @@ export function hideLocalPageTranslation(explicitStop = true): void {
   // An initial scan can still be yielding; without this bump it would finish and
   // start translating again for a user who already asked to stop.
   sessionEpoch += 1;
+  const stoppedScan = Boolean(pendingScan);
+  cancelPendingScan();
+  if (stoppedScan) clearTranslations();
   invalidatePendingDocumentTranslations();
   const session = activeSession;
   if (!session && suspendedSession) {
@@ -341,6 +361,7 @@ export function setPageTranslationDisplayMode(mode: TranslationDisplayMode): voi
 
 export function setLocalPageTranslationDisplayMode(mode: TranslationDisplayMode): void {
   currentDisplayMode = mode;
+  if (pendingScan) pendingScan.settings = { ...pendingScan.settings, translationDisplayMode: mode };
   const session = activeSession;
   if (!session && suspendedSession) return;
   if (session) session.settings = { ...session.settings, translationDisplayMode: mode };
@@ -558,42 +579,59 @@ function handleDynamicContent(session: TranslationSession, mutations: MutationRe
 
 function collectDynamicSegments(session: TranslationSession): void {
   if (!isActive(session)) return;
-  // New markup means new text, so the next viewport event may reveal something
-  // the previous scan could not see.
-  session.viewportRescanScope = "full";
-  refreshSegments(session);
+  refreshSegments(session, "changed");
   scheduleNearbySegments(session);
 }
 
-function refreshSegments(session: TranslationSession, scope: RescanScope = "full"): void {
-  const staleIds = invalidateStaleSegments([...session.changedRoots]);
+function queueRefreshRoot(session: TranslationSession, root: Element): void {
+  if (!root.isConnected || session.refreshRoots.has(document.body)) return;
+  if (root === document.body || session.refreshRoots.size >= 4096) {
+    session.refreshRoots.clear(); session.refreshRoots.add(document.body);
+  } else session.refreshRoots.add(root);
+}
+
+function refreshSegments(session: TranslationSession, scope: RescanScope = "changed"): void {
+  if (!isActive(session)) return;
+  const changed = [...session.changedRoots];
+  const roots = [...session.dynamicRoots, ...changed];
+  const staleIds = invalidateStaleSegments(changed);
   session.changedRoots.clear();
-  // A stale segment left tracking, so the subtree hosting its source has to be
-  // scanned again even when the viewport only reports hidden candidates.
-  const staleRoots: Element[] = [];
+  session.dynamicRoots.clear();
+  // Invalidation stays synchronous so an arriving response cannot render a
+  // recycled row while the replacement scan is yielding.
   for (const id of staleIds) {
     const entry = session.entries.get(id);
-    if (entry?.segment.element.isConnected) staleRoots.push(entry.segment.element);
-    if (!entry) continue;
+    if (entry?.segment.element.isConnected) roots.push(entry.segment.element);
     session.entries.delete(id);
     settleInitialSegment(session, id);
   }
-  session.dynamicRoots.clear();
-  if (scope === "none" && !staleIds.length) return;
-  // Visibility and clipping change through scrolling alone, with no DOM
-  // mutation. Those rescans only revisit the subtrees that were hidden last
-  // time; the candidates that are still hidden come back for the next scroll.
-  const roots = scope === "full" ? [document.body]
-    : scope === "hidden" ? [...takeHiddenScanRoots(), ...staleRoots]
-      : [document.body];
-  for (const root of new Set(roots)) {
-    if (!root.isConnected) continue;
-    for (const segment of collectAdditionalTextSegments(root, session.settings.translateCodeComments)) {
-      if (!session.entries.has(segment.id)) {
-        session.entries.set(segment.id, { segment, status: "idle" });
-      }
+  if (scope === "full") roots.push(document.body);
+  // Take one snapshot of all candidates. Time slicing completes the snapshot
+  // without requiring another scroll; roots that remain hidden wait for a new
+  // viewport event instead of causing an endless background retry loop.
+  else if (scope === "hidden") roots.push(...takeHiddenScanRoots(Number.POSITIVE_INFINITY));
+  for (const root of roots) queueRefreshRoot(session, root);
+  if (session.refreshTask || !session.refreshRoots.size) return;
+  session.refreshTask = (async () => {
+    while (isActive(session) && session.refreshRoots.size) {
+      const pending = [...session.refreshRoots]; session.refreshRoots.clear();
+      await collectAdditionalTextSegmentsProgressive(pending, session.settings.translateCodeComments, {
+        signal: session.scanController.signal,
+        observeChanges: false,
+        onSegments: segments => {
+          if (!isActive(session)) return;
+          for (const segment of segments) {
+            if (!session.entries.has(segment.id)) session.entries.set(segment.id, { segment, status: "idle" });
+          }
+        }
+      });
+      if (isActive(session)) scheduleNearbySegments(session);
     }
-  }
+  })().catch(error => {
+    if (!isActive(session)) return;
+    session.firstError ??= error instanceof Error ? error.message : String(error);
+    notifyTranslationState();
+  }).finally(() => { session.refreshTask = undefined; });
 }
 
 function isExtensionOwned(element: Element): boolean {
@@ -700,6 +738,8 @@ function cancelActiveSession(): void {
   document.removeEventListener("wupage:frame-visibility", handleViewportChange);
   document.removeEventListener("load", handleImageLoad, true);
   if (!session) return;
+  session.scanController.abort();
+  session.refreshRoots.clear();
   session.observer.disconnect();
   session.viewport.disconnect();
   session.dynamicRoots.clear();

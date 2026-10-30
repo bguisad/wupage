@@ -621,7 +621,7 @@ describe("viewport page translation", () => {
       .toBe("译文：Previously covered email body."));
   });
 
-  it("reaches covered paragraphs that overflow one rescan batch", async () => {
+  it("finishes covered paragraphs beyond one batch after a single scroll", async () => {
     const count = 401;
     document.body.innerHTML = `<main>${Array.from({ length: count }, (_, index) =>
       `<p data-top="0">Covered paragraph ${index}.</p>`).join("")}</main><div id="overlay"></div>`;
@@ -636,10 +636,7 @@ describe("viewport page translation", () => {
 
     covered = false;
     window.dispatchEvent(new Event("scroll"));
-    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(400), { timeout: 10000 });
-
-    window.dispatchEvent(new Event("scroll"));
-    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation")).toHaveLength(count), { timeout: 10000 });
+    await vi.waitFor(() => expect(document.querySelectorAll(".wupage-translation:not(.wupage-translation-pending)")).toHaveLength(count), { timeout: 4000 });
   });
 
   it("keeps watching when the initial email view is empty", async () => {
