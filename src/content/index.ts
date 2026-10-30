@@ -52,9 +52,6 @@ const appearance = setupAppearance(undefined, { extensionPage: false, onChange: 
 } });
 // Ignore an older initial read if the user saves a newer appearance while it is pending.
 let appearanceRevision = 0;
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes[SETTINGS_KEY]) appearanceRevision++;
-});
 void sendRuntimeRequest<ExtensionSettings>({ type: "GET_SETTINGS" }).then(settings => {
   if (!appearanceRevision) appearance.update(settings.appearance);
 }).catch(() => undefined);
@@ -65,9 +62,13 @@ initSelectionTranslation();
 initKeyboardShortcuts(executeTranslationShortcut);
 initVideoSubtitles();
 
+// One listener for the saved settings: the appearance revision and the page
+// translation settings must observe the same change, in the same order.
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
   const change = changes[SETTINGS_KEY];
-  if (area !== "local" || !change) return;
+  if (!change) return;
+  appearanceRevision++;
   const settings = change.newValue as ExtensionSettings | undefined;
   if (settings) updatePageTranslationSettings(settings);
 });
