@@ -102,11 +102,15 @@ let doubaoStatus: DoubaoStatus = { state: "unknown" };
 let doubaoCheck: Promise<void> | undefined;
 let doubaoStatusRevision = 0;
 let doubaoRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
+let saveButtonAnimation: Animation | undefined;
 let optionsClosed = false;
 
 window.addEventListener("pagehide", () => {
   optionsClosed = true;
   clearTimeout(doubaoRetryTimer);
+  clearTimeout(statusTimer);
+  saveButtonAnimation?.cancel();
 }, { once: true });
 
 void init().catch((error: unknown) => {
@@ -161,7 +165,16 @@ async function init(): Promise<void> {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") setProviderMenuOpen(false);
   });
-  saveButton.addEventListener("click", () => { void save().catch(() => {}); });
+  saveButton.addEventListener("click", () => {
+    saveButtonAnimation?.cancel();
+    if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      saveButtonAnimation = saveButton.animate?.([
+        { transform: "translateY(2px) scale(.96)", filter: "brightness(.9)" },
+        { transform: "none", filter: "none" }
+      ], { duration: 180, easing: "ease-out" });
+    }
+    void save().catch(() => {});
+  });
   restoreButton.addEventListener("click", restoreDefaults);
   providerForm.addEventListener("input", invalidateProviderTest);
   providerForm.addEventListener("change", invalidateProviderTest);
@@ -807,11 +820,12 @@ function createCustomProviderId(kind: string): string {
 }
 
 async function save(showSavedStatus = true): Promise<void> {
+  if (showSavedStatus) setStatus("");
   try {
     settings = readSettingsFromForm();
     await persistSettings(false);
     render();
-    if (showSavedStatus) setStatus("已保存。");
+    if (showSavedStatus) setStatus("已保存。", 1200);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
     throw error;
@@ -821,7 +835,7 @@ async function save(showSavedStatus = true): Promise<void> {
 async function persistSettings(showSavedStatus: boolean): Promise<void> {
   await sendRuntimeMessage({ type: "SAVE_SETTINGS", settings });
   settings = await sendRuntimeMessage<ExtensionSettings>({ type: "GET_SETTINGS" });
-  if (showSavedStatus) setStatus("已保存。");
+  if (showSavedStatus) setStatus("已保存。", 1200);
 }
 
 function invalidateProviderTest(): void {
@@ -1077,8 +1091,16 @@ function setProviderMenuOpen(open: boolean): void {
   providerTrigger.setAttribute("aria-expanded", String(open));
 }
 
-function setStatus(value: string): void {
+function setStatus(value: string, duration?: number): void {
+  clearTimeout(statusTimer);
+  statusTimer = undefined;
   status.textContent = value;
+  if (duration !== undefined) {
+    statusTimer = setTimeout(() => {
+      status.textContent = "";
+      statusTimer = undefined;
+    }, duration);
+  }
 }
 
 function query<T extends Element>(selector: string): T {

@@ -967,6 +967,15 @@ button.secondary {
   background: var(--wp-border, #dfe8e5);
 }
 
+#save:active {
+  transform: translateY(2px) scale(.96);
+  filter: brightness(.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #save:active { transform: none; }
+}
+
 .provider-dialog {
   width: min(420px, calc(100% - 32px));
   padding: 0;
